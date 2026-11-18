@@ -15,62 +15,116 @@ frontend/   Next.js 16 (App Router, TypeScript, Tailwind 4) + Zod
 
 ## Features
 
-**Monitoring (backend CRON)**
-- Per-service schedule: each service is checked on its own `check_interval_seconds`
-  (a 10s sweep claims due services; checks run concurrently with per-check timeouts).
-- State machine per service: `healthy` → `down` (N consecutive failures),
-  `slow` (latency over threshold), `flaky` (failure rate over a rolling window),
-  with recovery back to `healthy`. Thresholds are configurable per service.
-- Every check is stored (`check_results`), so history outlives process restarts.
-- Incidents open automatically when a service degrades; they are annotated on
-  state shifts and resolved automatically on recovery.
+### Monitoring (backend CRON)
+- Service catalogue with full CRUD: name, unique slug, `health_url`, optional
+  description, `owner_email`, per-service `check_interval_seconds` (5s–24h),
+  per-check `timeout_seconds`, `reliability_target` (%) and an
+  enabled/paused switch — paused services are skipped by the CRON.
+- Per-service schedules: each service is checked on its own interval (a 10s sweep
+  claims due services; checks run concurrently with per-check timeouts, so one
+  slow service never blocks another). Catalogue changes take effect on the next
+  sweep — no restart needed.
+- State machine per service with configurable thresholds (down: 3 consecutive
+  failures · slow: 2000 ms latency · flaky: >30% failures over a 10-check window ·
+  recovery: 2 consecutive successes — all per-service, editable at runtime):
+  `healthy` → `down` / `slow` / `flaky`, with recovery back to `healthy`.
+- Every check is stored (`check_results`: success, latency, error, timestamp), so
+  history, metrics and uptime bars outlive process restarts.
 
-**Incidents & workflow**
-- Timeline events, acknowledge, public/internal notes, resolve (409s guard
-  re-ack/re-resolve).
-- Internal notes never leave the backend — the public pages only see
+### Incidents & workflow
+- Incidents open automatically when a service degrades (enters `down` or
+  escalates between degraded states) and resolve automatically on recovery;
+  manual resolve/acknowledge is available to staff. A partial unique index
+  guarantees at most one active incident per service, even under concurrent
+  checks.
+- Timeline events: automatic state-shift annotations, staff acknowledge,
+  public and internal notes. 409s guard re-acknowledge / re-resolve.
+- Internal notes never leave the backend — public pages only see
   `visibility="public"` events.
 
-**Metrics & reliability**
-- 24h metrics per service: total checks, success rate, avg/p95 latency, MTTD, MTTR.
-- 30d reliability: availability vs the service's target %, error budget, downtime used.
+### Metrics & reliability
+- 24h metrics per service: total checks, success rate, average and p95 latency,
+  MTTD (time to detect) and MTTR (time to recover).
+- 30d reliability per service: availability vs the service's target %, error
+  budget and downtime used.
+- Ops overviews: `GET /metrics` and `GET /reliability` cover the whole catalogue
+  in one call; raw check history is exposed per service.
 
-**Notifications**
+### Notifications — email (the user-facing channel)
+- Every account subscribes from its dashboard **with its own account email**
+  (`email_subscriptions` collection — stored separately from the dormant FCM
+  token store). No address is accepted from the request body, so third parties
+  can never be signed up; re-subscribing is idempotent.
+- **Automated CRON trigger** (Task 8): every service state change detected by the
+  health-check job is written to a durable outbox (`mail_outbox`) and a
+  mail-dispatch CRON job (every 10s sweep) delivers it — retrying SMTP failures
+  with backoff (5 attempts, 1-minute base), marking rows `failed`/`skipped` for
+  inspection, and flushing anything queued while the backend was down on the
+  next startup.
+- Each subscribed, **active** account receives an individual email (one message
+  per recipient; addresses are never shared between subscribers). Subject
+  `[Pulse] <service> is <state>`, body with the old → new transition, incident
+  notice and a link to the service's public status page.
+- Mail goes out over SMTP — for Gmail, a Google **App Password** (`PULSE_SMTP_*`,
+  STARTTLS). Without credentials subscriptions keep working and queued rows wait
+  in the outbox until SMTP is configured.
+- Per-address delivery stats (`send_count` / `fail_count` / `last_sent_at` /
+  `last_error`), surfaced in the dashboard panel with a "Refresh delivery
+  stats" button.
+- Subscription is optional for subscribers; operators and admins must stay
+  subscribed — `GET /dashboard` flags it via `email_notifications.notifications_required`.
 - Webhook receiver (`PULSE_WEBHOOK_URL`) gets incident opened/resolved events;
   every attempt is recorded for auditing.
-- **Email (the user-facing channel)**: every account subscribes from its
-  dashboard with its own account email (`email_subscriptions` collection —
-  stored separately from the FCM token store). The health-check CRON
-  **automatically triggers** the mail on every service state change — the
-  change is first written to a durable outbox (`mail_outbox` collection) and a
-  CRON job dispatches it, retrying on SMTP failures with backoff (5 attempts,
-  1-minute base) and flushing anything queued while the backend was down on
-  the next startup. Each subscribed, active account receives an individual
-  email (one message per recipient; addresses are never shared). Mail is sent
-  over SMTP — for Gmail, an **App Password** (`PULSE_SMTP_*`); without
-  credentials subscriptions still work and rows wait in the outbox until SMTP
-  is configured. Per-address send/fail stats are kept. Staff (operator/admin)
-  must stay subscribed; `GET /dashboard` reports it via `email_notifications`.
 - Firebase Cloud Messaging remains in the backend (`core/fcm.py`, devices API)
   in **dormant** form: the frontend no longer uses it and pushes only happen
   when a service account is configured.
 
-**Public status page**
-- `/status` — all enabled services with current state and 24 hourly uptime bars;
-  `/status/{slug}` — detail with a 30-day daily uptime bar and incident history.
-- Bucket colors mirror the live states (green/yellow/maroon/red, gray = no data)
-  and are computed server-side. No owner data or internal notes ever reaches these
-  pages. Unknown slugs render a not-found page marked `noindex`.
+### Public status pages
+- `/status` — a table of all enabled services with current state, description,
+  **24 hourly uptime bars** (color-coded squares with per-bucket tooltips:
+  % ok / checks / avg latency), last check time and last latency; an
+  **Active incidents** panel listing each open/acknowledged incident with its
+  public timeline; and a color legend.
+- `/status/{slug}` — service detail: current state, latency, description, a
+  24-hour strip **and a 30-day daily uptime bar**, and the public incident
+  history (public timeline events only).
+- Bucket colors mirror the live states (green/yellow/maroon/red, gray = no
+  data) and are computed server-side. No owner data or internal notes ever
+  reach these pages. Unknown slugs render a not-found page marked `noindex`.
+- Landing page (`/`) introduces the product with sign-in/register shortcuts.
 
-**Auth & RBAC**
-- JWT bearer tokens (bcrypt password hashing). New accounts are always `subscriber`.
-- The frontend holds the token in an httpOnly cookie (`pulse_token`, 12h max-age) —
-  the JWT never reaches browser JS. Pages call only self-hosted `/api/*` routes
-  (a BFF layer that validates payloads with Zod both ways); the browser never
-  talks to the FastAPI backend directly.
-- Role-shaped `GET /dashboard`: subscriber → status view; operator → incidents,
-  metrics, reliability, catalogue; admin → operator view + user management,
-  webhook delivery stats and service management.
+### Dashboards (frontend, role-shaped)
+- **Subscriber** (`/dashboard`): email subscription panel (optional), service
+  summary stats and the monitored-services watchlist with live states.
+- **Operator** (`/dashboard/operator`): everything above **plus** the incidents
+  console (filter by status; acknowledge, add public/internal notes, resolve
+  inline), 24h metrics overview, 30d reliability vs targets, the catalogue with
+  slugs/intervals/targets, and the per-service **state-threshold editor**
+  (`/dashboard/services/{id}`) for down/slow/flaky/recovery tuning.
+- **Admin** (`/dashboard/admin`): everything the operator sees **plus** user
+  management (search, role changes, deactivate/reactivate, soft delete — with
+  self-protection so you can't demote/deactivate yourself), full service
+  management (create, pause/resume, delete), and the webhook delivery history
+  table.
+- Email subscription panel is **required** (black-bordered until completed) on
+  staff dashboards; subscribers opt in freely.
+- Shared header shows the signed-in identity, role, dashboard link and sign-out.
+
+### Auth, sessions & security
+- JWT bearer tokens (bcrypt password hashing, 12h default lifetime). New
+  accounts are always `subscriber`; the first admin is bootstrapped from env at
+  startup (idempotent); user deletion is a soft delete (deactivated, history
+  preserved).
+- The frontend holds the token in an httpOnly cookie (`pulse_token`) — the JWT
+  never reaches browser JS; the cookie is marked `Secure` automatically on
+  HTTPS (`x-forwarded-proto`), so local HTTP and proxied HTTPS both work.
+- Pages call only self-hosted `/api/*` routes (a BFF layer that validates
+  payloads with Zod in both directions); the browser never talks to the FastAPI
+  backend directly. `proxy.ts` (Next 16 Middleware) answers anonymous
+  `/dashboard/*` requests with a real HTTP 307 to `/auth/login`; in-page role
+  gates render access panels instead of streaming redirects.
+- RBAC enforced twice — FastAPI dependencies (`CurrentUser` / `RequireStaff` /
+  `RequireAdmin`) and the dashboard payloads/pages themselves.
 
 ## Roles
 
