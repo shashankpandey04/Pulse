@@ -385,20 +385,12 @@ export const PublicServiceDetailSchema = z.object({
 export type PublicServiceDetail = z.infer<typeof PublicServiceDetailSchema>;
 
 /* -----------------------------------------------------------------------------
- * Push devices (Firebase Cloud Messaging tokens)
+ * Email notifications (SMTP mail-out — the user-facing notification channel)
  * --------------------------------------------------------------------------- */
 
-export const DeviceTokenCreateInputSchema = z.object({
-  fcm_token: z.string().min(16).max(4096),
-  device_label: z.string().max(100).optional(),
-});
-export type DeviceTokenCreateInput = z.infer<typeof DeviceTokenCreateInputSchema>;
-
-export const DeviceTokenSchema = z.object({
-  token_id: id,
-  token_preview: z.string(),
-  device_label: z.string().nullable(),
-  user_agent: z.string().nullable(),
+export const EmailSubscriptionSchema = z.object({
+  subscription_id: id,
+  email: z.string(),
   created_at: isoDatetime,
   updated_at: isoDatetime,
   last_sent_at: isoDatetime.nullable(),
@@ -406,13 +398,12 @@ export const DeviceTokenSchema = z.object({
   fail_count: z.number().int(),
   last_error: z.string().nullable(),
 });
-export type DeviceToken = z.infer<typeof DeviceTokenSchema>;
+export type EmailSubscription = z.infer<typeof EmailSubscriptionSchema>;
 
-export const DeviceTokenListSchema = z.object({
-  total: z.number().int(),
-  tokens: z.array(DeviceTokenSchema),
+export const EmailSubscriptionStatusSchema = z.object({
+  subscription: EmailSubscriptionSchema.nullable(),
 });
-export type DeviceTokenList = z.infer<typeof DeviceTokenListSchema>;
+export type EmailSubscriptionStatus = z.infer<typeof EmailSubscriptionStatusSchema>;
 
 /* -----------------------------------------------------------------------------
  * Dashboard
@@ -439,13 +430,11 @@ export const DashboardSchema = z.object({
   notifications_summary: z
     .object({ total: z.number().int(), delivered: z.number().int(), failed: z.number().int() })
     .nullable(),
-  devices: z
-    .object({
-      total: z.number().int(),
-      notifications_required: z.boolean(),
-      fcm_enabled: z.boolean(),
-    })
-    .nullable(),
+  email_notifications: z.object({
+    subscribed: z.boolean(),
+    email: z.string().nullable(),
+    notifications_required: z.boolean(),
+  }),
 });
 export type Dashboard = z.infer<typeof DashboardSchema>;
 

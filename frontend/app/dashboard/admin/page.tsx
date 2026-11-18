@@ -1,9 +1,8 @@
 import { Suspense } from "react";
 import Link from "next/link";
-import { redirect } from "next/navigation";
 import { SiteHeader } from "@/components/site-header";
 import { AccessPanel } from "@/components/access-panel";
-import { NotificationSetup } from "@/components/notification-setup";
+import { EmailNotifications } from "@/components/email-notifications";
 import { Panel, Stat } from "@/components/ui";
 import { UsersPanel } from "@/components/users-panel";
 import { ServicesPanel } from "@/components/services-panel";
@@ -45,8 +44,20 @@ async function AdminSummaries() {
   );
 }
 
-async function NotificationsTable() {
-  const data = await pageApi("/notifications?page_size=20", NotificationListSchema);
+async function EmailNotificationsPanel() {
+  const dashboard = await pageApi("/dashboard", DashboardSchema);
+  return (
+    <EmailNotifications
+      required={dashboard.email_notifications.notifications_required}
+      summary={{
+        subscribed: dashboard.email_notifications.subscribed,
+        email: dashboard.email_notifications.email,
+      }}
+    />
+  );
+}
+
+async function NotificationsTable() {  const data = await pageApi("/notifications?page_size=20", NotificationListSchema);
   return (
     <table className="w-full text-sm">
       <thead>
@@ -118,7 +129,7 @@ export default async function AdminDashboardPage() {
 
         <UsersPanel selfUid={admin.uid} />
 
-        <NotificationSetup required />
+        <EmailNotificationsPanel />
 
         <ServicesPanel canManage />
 

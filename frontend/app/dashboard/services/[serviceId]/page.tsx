@@ -1,4 +1,3 @@
-import { redirect } from "next/navigation";
 import { SiteHeader } from "@/components/site-header";
 import { AccessPanel } from "@/components/access-panel";
 import { Panel } from "@/components/ui";

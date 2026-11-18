@@ -2,7 +2,7 @@
 
 Pulse is a self-hosted status & incident hub: a FastAPI backend runs a health-check
 CRON over a catalogue of services, opens and resolves incidents from check results,
-computes metrics and reliability, and notifies people (webhook + Firebase push) when
+computes metrics and reliability, and notifies people (webhook + email) when
 a service changes state. A Next.js frontend renders role-shaped dashboards and a
 sanitized public status page.
 
@@ -38,11 +38,18 @@ frontend/   Next.js 16 (App Router, TypeScript, Tailwind 4) + Zod
 **Notifications**
 - Webhook receiver (`PULSE_WEBHOOK_URL`) gets incident opened/resolved events;
   every attempt is recorded for auditing.
-- Firebase Cloud Messaging: every account can register any number of devices;
-  each state change is pushed to every subscribed device of every active account.
-  Subscribers opt in from their dashboard; operators/admins must keep at least one
-  device (`GET /dashboard` reports `devices.notifications_required`).
-  Stale FCM tokens are pruned automatically; per-device delivery stats are kept.
+- **Email (the user-facing channel)**: every account subscribes from its
+  dashboard with its own account email (`email_subscriptions` collection —
+  stored separately from the FCM token store). On each state change the
+  backend emails every subscribed, active account individually (one message
+  per recipient; addresses are never shared between subscribers). Mail is
+  sent over SMTP — for Gmail, an **App Password** (`PULSE_SMTP_*`); without
+  credentials subscriptions still work and deliveries are skipped. Per-address
+  send/fail stats are kept. Staff (operator/admin) must stay subscribed;
+  `GET /dashboard` reports it via `email_notifications`.
+- Firebase Cloud Messaging remains in the backend (`core/fcm.py`, devices API)
+  in **dormant** form: the frontend no longer uses it and pushes only happen
+  when a service account is configured.
 
 **Public status page**
 - `/status` — all enabled services with current state and 24 hourly uptime bars;
@@ -67,7 +74,7 @@ frontend/   Next.js 16 (App Router, TypeScript, Tailwind 4) + Zod
 | -------------------------------------- | :-------: | :--------: | :------: | :---: |
 | Public status pages                    |     ✓     |     ✓      |    ✓     |   ✓   |
 | Register / sign in                     |     ✓     |     —      |    —     |   —   |
-| Register push devices                  |     —     |     ✓      |    ✓     |   ✓   |
+| Subscribe to email notifications        |     —     |     ✓      |    ✓     |   ✓   |
 | Read incidents, metrics, reliability   |     —     |     —      |    ✓     |   ✓   |
 | Ack / note / resolve incidents         |     —     |     —      |    ✓     |   ✓   |
 | Configure state thresholds             |     —     |     —      |    ✓     |   ✓   |
@@ -83,13 +90,13 @@ frontend/   Next.js 16 (App Router, TypeScript, Tailwind 4) + Zod
                                              │ http + bearer (server-side only)
             ┌────────────────────────────────▼──────────────────────────────────────────┐
             │                       FastAPI backend (uvicorn :8000)                     │
-            │  auth · catalogue · states · devices · incidents · metrics · reliability  │
-            │  notifications · public · dashboard · admin                               │
+            │  auth · catalogue · states · devices · email-subscriptions · incidents    │
+            │  metrics · reliability · notifications · public · dashboard · admin       │
             │        ▲ APScheduler CRON (health checks, every 10s sweep)                │
-            └───┬───────────────────┬──────────────────────────┬────────────────────────┘
-                │                   │                          │
-             MongoDB             webhook receiver            Firebase FCM
-          (pulse database)      (PULSE_WEBHOOK_URL)      (service account, optional)
+            └───┬──────────────┬──────────────┬────────────────────────────────────────┘
+                │              │              │
+             MongoDB      webhook receiver   SMTP (Gmail App Password)
+          (pulse database) (PULSE_WEBHOOK_URL)  + dormant FCM (service account)
 ```
 
 ## Tech stack
@@ -97,7 +104,7 @@ frontend/   Next.js 16 (App Router, TypeScript, Tailwind 4) + Zod
 | Layer    | Tech                                                                 |
 | -------- | -------------------------------------------------------------------- |
 | Backend  | Python 3.12+, FastAPI, Pydantic v2, pymongo (MongoDB), PyJWT, bcrypt, APScheduler, httpx, firebase-admin |
-| Frontend | Next.js 16.4.6 (App Router, Turbopack, Cache Components), React 19, TypeScript, Tailwind CSS 4, Zod 4, Firebase Web SDK |
+| Frontend | Next.js 16.4.6 (App Router, Turbopack, Cache Components), React 19, TypeScript, Tailwind CSS 4, Zod 4 |
 
 ## Getting started
 
@@ -129,7 +136,7 @@ Interactive API docs: <http://localhost:8000/docs>
 ```powershell
 cd frontend
 npm install
-copy .env.example .env.local   # fill in BACKEND_URL + Firebase keys
+copy .env.example .env.local   # fill in BACKEND_URL
 npm run dev                    # or: npm run build && npm start
 ```
 
@@ -147,16 +154,27 @@ new accounts are subscribers; promote them in the admin console).
 | `PULSE_JWT_SECRET`          | dev fallback                     | HMAC key for JWTs — set in production |
 | `PULSE_TOKEN_MINUTES`       | `720`                            | Access-token lifetime (12h) |
 | `PULSE_WEBHOOK_URL`         | `http://localhost:9900`          | Webhook receiver base URL |
-| `PULSE_FIREBASE_CREDENTIALS`| unset                            | Path to a Firebase service-account JSON; unset = FCM disabled (registrations still work) |
+| `PULSE_SMTP_HOST` / `PULSE_SMTP_PORT` | `smtp.gmail.com` / `587` | Outgoing mail server (STARTTLS) |
+| `PULSE_SMTP_USER`           | unset                            | Gmail address mail is sent **from** |
+| `PULSE_SMTP_PASSWORD`       | unset                            | Google **App Password** (16 characters — not the account password); unset = mailer disabled |
+| `PULSE_SMTP_FROM`           | = `PULSE_SMTP_USER`              | Override the From address |
+| `PULSE_PUBLIC_URL`          | `http://localhost:3000`          | Frontend base URL used in status-page links inside emails |
+| `PULSE_FIREBASE_CREDENTIALS`| unset                            | Dormant FCM backend: path to a service-account JSON; unset = pushes disabled |
 | `PULSE_ADMIN_EMAIL` / `PULSE_ADMIN_PASSWORD` | unset           | Bootstrap admin created at startup |
+
+To enable notification emails for a Gmail account: turn on 2-Step Verification,
+create an **App Password** (Google Account → Security → 2-Step Verification →
+App passwords), then set `PULSE_SMTP_USER` to the Gmail address and
+`PULSE_SMTP_PASSWORD` to the App Password and restart the backend.
 
 **Frontend** (`.env.local`; see `.env.example`)
 
 | Variable                          | Purpose |
 | --------------------------------- | ------- |
 | `BACKEND_URL`                     | FastAPI base URL used by the BFF (default `http://localhost:8000`) |
-| `NEXT_PUBLIC_FIREBASE_API_KEY`, `_AUTH_DOMAIN`, `_PROJECT_ID`, `_STORAGE_BUCKET`, `_MESSAGING_SENDER_ID`, `_APP_ID` | Firebase Web config (public client identifiers) |
-| `NEXT_PUBLIC_FIREBASE_VAPID_KEY`  | Web Push certificate key for FCM `getToken` |
+
+Notification emails are configured entirely on the backend — the frontend
+needs no Firebase/mail settings.
 
 The auth cookie is marked `Secure` automatically when the request arrives over
 HTTPS (`x-forwarded-proto`), so plain-HTTP local runs and proxied HTTPS both work.
@@ -170,13 +188,14 @@ HTTPS (`x-forwarded-proto`), so plain-HTTP local runs and proxied HTTPS both wor
 | Users/admin | `GET /admin/users`, `PATCH /admin/users/{uid}` (role, active), `DELETE /admin/users/{uid}` (soft delete) |
 | Catalogue   | `GET|POST /catalogue`, `GET|PATCH|DELETE /catalogue/{service_id}` |
 | State cfg   | `GET|PUT /states/{service_id}`, `DELETE /states/{service_id}` (reset) |
-| Devices     | `POST|GET /devices` (FCM tokens, masked in responses), `DELETE /devices/{token_id}` |
+| Devices     | `POST|GET /devices` (FCM tokens — dormant channel, masked in responses), `DELETE /devices/{token_id}` |
+| Email notifications | `POST|GET|DELETE /email-subscriptions` (subscribe the account email; idempotent) |
 | Incidents   | `GET /incidents`, `GET /incidents/{id}`, `PATCH /incidents/{id}/ack`, `POST /incidents/{id}/notes`, `POST /incidents/{id}/resolve` |
 | Metrics     | `GET /metrics`, `GET /metrics/{service_id}`, `GET /metrics/{service_id}/checks` |
 | Reliability | `GET /reliability`, `GET /reliability/{service_id}` |
 | Notifications | `GET /notifications` (webhook delivery history, staff only) |
 | Public      | `GET /public/status`, `GET /public/status/{slug}` (sanitized, no auth) |
-| Dashboard   | `GET /dashboard` (role-shaped: status view / ops console data / + admin summaries, includes `devices` summary) |
+| Dashboard   | `GET /dashboard` (role-shaped: status view / ops console data / + admin summaries; includes the `email_notifications` summary) |
 
 The frontend mirrors these under its own `/api/*` routes (the browser's only
 entry point); logout is handled there by clearing the session cookie.
@@ -216,7 +235,8 @@ backend/
     scheduler.py        APScheduler sweep loop
     health_check.py     check execution, state machine, incidents, webhook + FCM fan-out
     analytics.py        metrics, reliability, dashboard summaries, uptime buckets
-    fcm.py              Firebase Admin sender (per-device stats, stale-token pruning)
+    fcm.py              Firebase Admin sender (dormant channel: per-device stats, stale-token pruning)
+    mailer.py           SMTP sender (email fan-out to subscribed accounts)
   routers/              one module per API area (see API overview)
   schemas/              Pydantic models per domain (documents + requests/responses)
 
@@ -228,12 +248,10 @@ frontend/
     auth.ts             httpOnly cookie session
     client.ts           browser fetch helper (relative /api only)
     server-api.ts       server-component fetch (cookie forwarding)
-    firebase.ts         FCM client (dynamic import, browser only)
   app/api/              BFF route handlers mirroring the backend API
   app/                  pages: /, /status, /status/[slug], /auth/*, /dashboard/*
   components/           ui primitives + incidents/users/services panels,
-                        notification-setup (push subscription), history-bars
-  public/firebase-messaging-sw.js   background push handler
+                        email-notifications (email subscription), history-bars
 ```
 
 ## Verification

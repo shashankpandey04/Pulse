@@ -97,3 +97,12 @@ Instructions:
 *Task 6*
 On clicking `Subscribe this device` on dashboard results new message: `Notification permission was not granted — subscriptions need it to deliver pushes.`
 Use JS to ask for permission of notification from user. Then proceed with Token saving and device registration.
+
+*Task 7*
+Skip Firebase Notification System. Replace it with mail system.
+We will use Google App Password for sending mail from my personal mail for testing purpose as of now.
+Update the backend and the following:
+- On Subscribe they're subscribed via their email account.
+- Save their email to database separately than firebase one for now.
+- When API state changes, send the email to all subscribed users.
+- Remove the Firebase Notification system only visually from frontend.

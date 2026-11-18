@@ -1,12 +1,11 @@
 import Link from "next/link";
-import { redirect } from "next/navigation";
 import { SiteHeader } from "@/components/site-header";
 import { AccessPanel } from "@/components/access-panel";
-import { NotificationSetup } from "@/components/notification-setup";
+import { EmailNotifications } from "@/components/email-notifications";
 import { Panel, StateLabel } from "@/components/ui";
 import { IncidentsPanel } from "@/components/incidents-panel";
 import { pageApi, PageApiError } from "@/lib/server-api";
-import { MetricsOverviewSchema, ReliabilityListSchema, ServiceListResponseSchema, UserResponseSchema, STATE_COLORS } from "@/lib/schemas";
+import { DashboardSchema, MetricsOverviewSchema, ReliabilityListSchema, ServiceListResponseSchema, UserResponseSchema, STATE_COLORS } from "@/lib/schemas";
 
 // Auth-gated staff console: blocks on the session check by design.
 export const instant = false;
@@ -39,10 +38,11 @@ export default async function OperatorDashboardPage() {
     );
   }
 
-  const [metrics, reliability, catalogue] = await Promise.all([
+  const [metrics, reliability, catalogue, dashboard] = await Promise.all([
     pageApi("/metrics", MetricsOverviewSchema),
     pageApi("/reliability", ReliabilityListSchema),
     pageApi("/catalogue?page_size=100", ServiceListResponseSchema),
+    pageApi("/dashboard", DashboardSchema),
   ]);
 
   return (
@@ -59,7 +59,13 @@ export default async function OperatorDashboardPage() {
 
         <IncidentsPanel role={session.role} />
 
-        <NotificationSetup required />
+        <EmailNotifications
+          required={dashboard.email_notifications.notifications_required}
+          summary={{
+            subscribed: dashboard.email_notifications.subscribed,
+            email: dashboard.email_notifications.email,
+          }}
+        />
 
         <Panel title="Metrics — last 24 hours">
           <table className="w-full text-sm">

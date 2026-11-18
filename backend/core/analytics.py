@@ -16,6 +16,7 @@ from typing import Any
 
 from schemas.dashboard import IncidentSummary, NotificationsSummary, UsersSummary
 from schemas.device import COLLECTION_DEVICE_TOKENS, DevicesSummary
+from schemas.email_subscription import COLLECTION_EMAIL_SUBSCRIPTIONS, EmailNotificationsSummary
 from schemas.incidents import COLLECTION_INCIDENTS
 from schemas.metrics import (
     COLLECTION_CHECK_RESULTS,
@@ -260,6 +261,20 @@ def devices_summary(uid: str, role: str, fcm_enabled: bool) -> DevicesSummary:
         total=total,
         notifications_required=role in ("operator", "admin") and total == 0,
         fcm_enabled=fcm_enabled,
+    )
+
+
+def email_subscription_summary(uid: str, role: str) -> EmailNotificationsSummary:
+    """The caller's email-subscription state (the user-facing channel).
+
+    ``notifications_required`` carries the Task 5 rule over to email:
+    operators and admins must stay subscribed, subscribers opt in optionally.
+    """
+    sub = database.find_one(COLLECTION_EMAIL_SUBSCRIPTIONS, {"uid": uid})
+    return EmailNotificationsSummary(
+        subscribed=sub is not None,
+        email=(sub or {}).get("email"),
+        notifications_required=role in ("operator", "admin") and sub is None,
     )
 
 

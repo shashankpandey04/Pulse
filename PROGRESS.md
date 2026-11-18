@@ -130,3 +130,40 @@ Pending:
 - If quiet-prompting persists on the user's browser, add an in-page pre-prompt explanation (e.g. "you will be asked to allow notifications") before the ask, a known mitigation for silenced prompts.
 
 Next: resolve the pending user-side confirmation; on success, record the full granted-path verification and close out Task 6.
+
+## Task 7 — Replace Firebase notifications with email (SMTP) (done)
+
+Firebase Cloud Messaging is **removed from the frontend only** and replaced by an email notification system backed by the user's Gmail account via a Google **App Password**. The backend FCM machinery (`core/fcm.py`, `routers/devices.py`, `device_tokens`) stays in place but dormant — nothing calls it from the UI and pushes only happen when a service account is configured.
+
+### Backend
+
+- Config (`core/config.py`): `PULSE_SMTP_HOST` (default `smtp.gmail.com`), `PULSE_SMTP_PORT` (587, STARTTLS), `PULSE_SMTP_USER` (Gmail address to send from), `PULSE_SMTP_PASSWORD` (the 16-character **App Password** — not the account password), `PULSE_SMTP_FROM` (defaults to the user), `PULSE_PUBLIC_URL` (for status-page links inside emails). Without user+password the mailer is disabled and subscriptions still work (same graceful stance as webhook/FCM).
+- New collection `email_subscriptions` (`schemas/email_subscription.py`): one document per subscribed account — `subscription_id`, `uid`, `email` (the **account's own email**, enforced server-side), plus per-address delivery stats (`send_count`, `fail_count`, `last_sent_at`, `last_error`). Indexes: unique `uid`, unique `email`. Stored separately from the FCM `device_tokens` as requested.
+- New router (`routers/email_subscriptions.py`, wired in `main.py`): `POST /email-subscriptions` subscribes the caller's account email (idempotent: 201 created / 200 already-subscribed; the request body is ignored — the address always comes from the authenticated user, so third parties can't be signed up), `GET /email-subscriptions` returns the caller's subscription or `null`, `DELETE /email-subscriptions` unsubscribes (404 when not subscribed).
+- Mailer (`core/mailer.py`): `smtplib` + `EmailMessage` over STARTTLS; one SMTP connection per fan-out, **one individual email per subscribed active account** (recipients never see each other). Subject `[Pulse] <service> is <state>`, body with the `old -> new` transition, incident notice when one opened, and a link to the public status page (`{PUBLIC_URL}/status/{slug}`). Per-address outcomes update the subscription stats; connection/login-level failures record on every subscriber. Runs as a fire-and-forget task drained by the sweep/shutdown (never breaks monitoring).
+- `core/health_check.py`: on every state change the fan-out now does webhook + (dormant) FCM + **email**.
+- `GET /dashboard` now returns `email_notifications` for every role: `subscribed`, `email`, `notifications_required` (true for operators/admins who are not subscribed — the Task 5 staff-mandatory rule carried over to email).
+
+### Frontend
+
+- New panel `components/email-notifications.tsx` ("Subscribe by email" / Unsubscribe, address shown from the dashboard payload, send/fail stats displayed): no permission prompts, no service workers, no tokens — subscription is one click that stores the account email server-side. Mounted on all three dashboards (`required` for staff via `dashboard.email_notifications`).
+- BFF route `app/api/email-subscriptions` (GET/POST/DELETE proxy with Zod validation).
+- **Firebase removed visually**: `notification-setup.tsx`, `lib/firebase.ts`, `public/firebase-messaging-sw.js`, `app/api/devices[/tokenId]`, the `firebase` npm dependency and all `NEXT_PUBLIC_FIREBASE_*` env keys (.env.local reset to BACKEND_URL only; `.env.example` documents the backend SMTP setup instead). Zod device schemas dropped; `DashboardSchema` gained required `email_notifications` and lost `devices`.
+- Lint hygiene: removed the now-unused `redirect`/`UserResponseSchema` imports (leftovers from the Task 4 AccessPanel swap) — `npm run lint` is back to only the 4 pre-existing `set-state-in-effect` panel errors.
+
+### Verification & manual testing
+
+Verified so far over HTTP: subscription API (account-email subscription, idempotent re-subscribe, status endpoint, anonymous 401), staff `notifications_required` flag before/after subscribing, dashboard payload wiring, frontend production build green with Firebase fully absent. The SMTP fan-out fired on a real CRON state change and correctly recorded per-address failures when the test SMTP sink was unreachable (`fail_count` + `last_error`), and subscribed/unsubscribed addressing logic is exercised by the wave design. Automated end-to-end delivery verification was **stopped early at the user's request** (test-script bugs produced false failures; the local SMTP sink was flaky under `Start-Process`), so real delivery is to be confirmed manually.
+
+Manual test with a real Gmail App Password (backend env, then restart uvicorn):
+
+```
+PULSE_SMTP_USER=<gmail address>
+PULSE_SMTP_PASSWORD=<16-char App Password>   # Google Account → Security → 2-Step Verification → App passwords
+# PULSE_SMTP_HOST / PULSE_SMTP_PORT default to smtp.gmail.com / 587
+# PULSE_SMTP_FROM defaults to PULSE_SMTP_USER; PULSE_PUBLIC_URL defaults to http://localhost:3000
+```
+
+Then: sign in on the dashboard → Subscribe by email → flip a service's state (e.g. point its health_url at a dead port, wait for the down transition) → each subscribed account should receive one individual email from the Gmail address.
+
+Next: user's manual mail-delivery test with real credentials; then the lint follow-up (restructure the panels' initial fetch or scope-disable `set-state-in-effect`) and optional backend bits (acknowledged/note webhook events, `OptionalUser` wiring).

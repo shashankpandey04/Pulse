@@ -28,8 +28,10 @@ def dashboard(user: CurrentUser) -> DashboardResponse:
     """Everything the caller's role is allowed to see, in one payload."""
     role = user["role"]
     response = DashboardResponse(role=role, generated_at=analytics.utcnow())
-    # Push-subscription state for every role (staff must keep one device).
+    # Push-subscription state for every role (kept for the dormant FCM flow).
     response.devices = analytics.devices_summary(user["uid"], role, fcm.enabled())
+    # Email-subscription state — the user-facing notification channel.
+    response.email_notifications = analytics.email_subscription_summary(user["uid"], role)
 
     if role == "subscriber":
         response.status = build_status_page()

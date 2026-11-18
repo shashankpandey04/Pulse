@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/client";
-import { RegisterInputSchema, UserResponseSchema } from "@/lib/schemas";
+import { RegisterInputSchema } from "@/lib/schemas";
 import { Field, Notice, PrimaryButton, inputClass } from "@/components/ui";
 
 export default function RegisterPage() {

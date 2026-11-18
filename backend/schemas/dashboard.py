@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 from .auth import Role
 from .catalogue import ServiceResponse
 from .device import DevicesSummary
+from .email_subscription import EmailNotificationsSummary
 from .metrics import MetricsOverviewResponse
 from .public import PublicStatusResponse
 from .reliability import ReliabilityListResponse
@@ -100,4 +101,9 @@ class DashboardResponse(BaseModel):
         default=None,
         description="The caller's push-subscription state (``notifications_required`` "
         "is True for operators/admins who have no device registered yet).",
+    )
+    email_notifications: EmailNotificationsSummary = Field(
+        default_factory=lambda: EmailNotificationsSummary(subscribed=False, email=None, notifications_required=False),
+        description="The caller's email-subscription state (the user-facing notification "
+        "channel; ``notifications_required`` is True for staff who are not subscribed).",
     )

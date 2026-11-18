@@ -22,10 +22,30 @@ WEBHOOK_URL: str = os.getenv("PULSE_WEBHOOK_URL", "http://localhost:9900")
 FIREBASE_CREDENTIALS: str | None = os.getenv("PULSE_FIREBASE_CREDENTIALS")
 """Path to a Firebase service-account JSON used by the FCM push sender.
 
-When unset (or the file is missing) the sender is disabled: device
-registrations and the dashboard keep working, but state changes are not
-pushed — mirroring how the webhook receiver may simply not be running.
+Kept for the dormant FCM backend machinery; the user-facing notification
+channel is now email (see SMTP_* below). When unset the push sender stays
+disabled — exactly like before.
 """
+
+SMTP_HOST: str = os.getenv("PULSE_SMTP_HOST", "smtp.gmail.com")
+"""Outgoing SMTP server (Gmail for the Google App Password flow)."""
+
+SMTP_PORT: int = int(os.getenv("PULSE_SMTP_PORT", "587"))
+"""SMTP port; 587 uses STARTTLS, 465 would use implicit SSL."""
+
+SMTP_USER: str | None = os.getenv("PULSE_SMTP_USER")
+"""Login user — the Gmail address mail is sent from."""
+
+SMTP_PASSWORD: str | None = os.getenv("PULSE_SMTP_PASSWORD")
+"""Login password — for Gmail a 16-character **App Password** (not the
+account password). When user+password are unset the mailer is disabled and
+subscriptions keep working without deliveries, mirroring the FCM stance."""
+
+SMTP_FROM: str | None = os.getenv("PULSE_SMTP_FROM")
+"""From address; defaults to ``SMTP_USER`` when unset."""
+
+PUBLIC_URL: str = os.getenv("PULSE_PUBLIC_URL", "http://localhost:3000")
+"""Base URL of the frontend, used for the status-page links in emails."""
 
 HEALTH_CHECK_JITTER_SECONDS: float = 0.0
 """Optional random delay added per check; keep 0 for deterministic tests."""

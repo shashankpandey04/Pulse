@@ -9,6 +9,7 @@ from pymongo.database import Database
 from schemas.auth import COLLECTION_USERS
 from schemas.catalogue import COLLECTION_SERVICES
 from schemas.device import COLLECTION_DEVICE_TOKENS
+from schemas.email_subscription import COLLECTION_EMAIL_SUBSCRIPTIONS
 from schemas.incidents import COLLECTION_INCIDENTS
 from schemas.metrics import COLLECTION_CHECK_RESULTS
 from schemas.notification import COLLECTION_NOTIFICATIONS
@@ -70,6 +71,9 @@ def ensure_indexes() -> None:
     # Push-notification devices: one registration per FCM token, listed per user.
     db[COLLECTION_DEVICE_TOKENS].create_index("fcm_token", unique=True)
     db[COLLECTION_DEVICE_TOKENS].create_index([("uid", 1), ("created_at", -1)])
+    # Email subscriptions: one per account (the account email is the address).
+    db[COLLECTION_EMAIL_SUBSCRIPTIONS].create_index("uid", unique=True)
+    db[COLLECTION_EMAIL_SUBSCRIPTIONS].create_index("email", unique=True)
     logger.info("database indexes ensured")
 
 

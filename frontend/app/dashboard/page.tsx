@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { SiteHeader } from "@/components/site-header";
-import { NotificationSetup } from "@/components/notification-setup";
+import { EmailNotifications } from "@/components/email-notifications";
 import { StateLabel, Panel, Stat } from "@/components/ui";
 import { pageApi, PageApiError } from "@/lib/server-api";
 import { DashboardSchema, UserResponseSchema } from "@/lib/schemas";
@@ -20,12 +20,18 @@ async function loadSession(): Promise<{ role: string } | null> {
   }
 }
 
-async function SubscriberView() {
+async function SubscriberView({ required }: { required: boolean }) {
   const dashboard = await pageApi("/dashboard", DashboardSchema);
   const status = dashboard.status;
+  const email = dashboard.email_notifications;
 
   return (
-    <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-8">
+    <>
+      <EmailNotifications
+        required={required}
+        summary={{ subscribed: email.subscribed, email: email.email }}
+      />
+      <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-8">
       <h1 className="text-2xl font-semibold tracking-tight">Your dashboard</h1>
       <p className="mt-1 text-sm text-muted">You are subscribed to the status of all monitored services.</p>
       <div className="mt-6 grid gap-4 sm:grid-cols-2">
@@ -48,7 +54,8 @@ async function SubscriberView() {
           </Panel>
         </div>
       )}
-    </main>
+      </main>
+    </>
   );
 }
 
@@ -69,8 +76,7 @@ export default async function DashboardPage() {
   return (
     <>
       <SiteHeader />
-      <NotificationSetup required={false} />
-      <SubscriberView />
+      <SubscriberView required={false} />
     </>
   );
 }
