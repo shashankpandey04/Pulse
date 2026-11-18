@@ -31,4 +31,19 @@ App: `main.py` — FastAPI with lifespan (indexes -> httpx client -> scheduler s
 
 Verification: `D:\Pulse\smoke_task2.py` against real local Mongo (test db `pulse_test`) + local fixture HTTP server — 38 checks passed: auth/RBAC flows (401/403/409/404 paths), catalogue & states CRUD, and the CRON: down after 3 failed checks -> incident auto-opened + webhook recorded; recovery after 2 successes -> incident auto-resolved + webhook recorded; flaky detection with tight window; second service scheduled independently; tampered token rejected; OpenAPI paths sane.
 
-Next: Task 3 — incidents/metrics/reliability/public/notification routers + dashboard aggregation.
+## Task 3 — Incidents/Metrics/Reliability/Public/Notification/Dashboard routers (done)
+
+- `schemas/public.py` — sanitized status-page payloads (public events only, no owner emails): `PublicStatusResponse` (summary/colors/services/active incidents), `PublicServiceDetail`.
+- `schemas/dashboard.py` — role-shaped `DashboardResponse` + `IncidentSummary`, `UsersSummary`, `NotificationsSummary`.
+- `core/analytics.py` — computations shared by routers: `service_metrics` (success rate, avg/p95 latency, MTTD from first failed check of the episode, MTTR from resolved durations), `service_reliability` (availability vs catalogue target, error budget allowed/consumed/remaining), `incidents_summary`, `users_summary`, `notifications_summary`. Storage convention documented: `resolved_at`/`acknowledged_at`/`monitoring.*` are BSON dates; `opened_at`/`checked_at`/timeline `at` are ISO strings — range queries use the matching type.
+- `routers/incidents.py` (staff) — list (filters: service_id, status; paged), get, `PATCH /{id}/ack` (409 unless open; timeline event + acknowledged_by), `POST /{id}/notes` (public default / internal), `POST /{id}/resolve` (manual; notifies webhook via `health_check.resolve_incident`; 409 if resolved).
+- `routers/metrics.py` (staff) — `/metrics` overview (window_hours 1-720, default 24), `/metrics/{service_id}`, `/metrics/{service_id}/checks` (raw results, success filter, paged).
+- `routers/reliability.py` (staff) — `/reliability` overview + per-service (window_days 1-90, default 30).
+- `routers/public.py` (no auth) — `/public/status` (enabled services + state colors + active incidents), `/public/status/{slug}` (service detail + incident history, public events only); `build_status_page()` reused by dashboard.
+- `routers/notification.py` (staff) — `/notifications` delivery history (filters: service_id, event_type, delivered).
+- `routers/dashboard.py` — `GET /dashboard` for any signed-in role: subscriber -> `status` (public view); operator -> `services` + `incidents_summary` + `metrics` + `reliability`; admin -> adds `users_summary` + `notifications_summary`.
+- `main.py` wired with all new routers; `database.update_push` helper added ($set + $push atomic).
+
+Verification: `D:\Pulse\smoke_task3.py` — 19 checks passed: RBAC (subscriber 403 on ops routers, anonymous dashboard 401), incident ack/notes/resolve lifecycle incl. 409s, internal notes hidden from public page (and no owner-email leak), metrics MTTD/MTTR/success-rate, reliability vs target + error budget, public status page + 404s, dashboard shapes for all three roles. Task 2 suite re-run: still 38/38.
+
+Next: frontend development (login/register, operator/admin dashboards, status page) with small backend additions as needed.

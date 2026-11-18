@@ -19,7 +19,7 @@ from core import database, health_check
 from core import config
 from core.health_check import drain_notifications
 from core.scheduler import build_scheduler
-from routers import auth, catalogue, state
+from routers import auth, catalogue, dashboard, incidents, metrics, notification, public, reliability, state
 
 logging.basicConfig(
     level=logging.INFO,
@@ -93,9 +93,19 @@ app = FastAPI(
 app.include_router(auth.router)
 app.include_router(catalogue.router)
 app.include_router(state.router)
+app.include_router(incidents.router)
+app.include_router(metrics.router)
+app.include_router(reliability.router)
+app.include_router(public.router)
+app.include_router(notification.router)
+app.include_router(dashboard.router)
 
 
 @app.get("/health", tags=["meta"])
 def health() -> dict:
     """Liveness probe for the Pulse backend itself."""
     return {"status": "ok", "service": "pulse"}
+
+if "__main__" == __name__:
+    import uvicorn
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, log_level="info")    

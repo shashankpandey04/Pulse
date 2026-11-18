@@ -58,3 +58,11 @@ To create the required schemas for Incidents, Metrics, Reliability.
 2) Metrics: Shows how quickly problems are detected and resolved, and how the checking itself is performing.
 3) Reliability: Show each service's availability over time against its target, and how much room for failure is left.
 4) Notifications: Notify the webhook receiver when an incident opens and when it resolves.
+
+*Task 3: Implementation of incidents/metrics/reliability/public routers + dashboard API with RBAC
+
+Now we will implement the API Endpoints which are required to view/update/create the operations as per the module with respect to their roles.
+
+Along with that, also implement Dashboard API, which returns the data as per user roles.
+
+After that we will move to frontend development mainly. With a few part of backend development.

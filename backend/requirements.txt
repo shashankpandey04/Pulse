@@ -6,3 +6,4 @@ pydantic[email]
 pyjwt
 apscheduler
 httpx
+firebase-admin

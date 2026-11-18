@@ -9,6 +9,8 @@ Submodules
     metrics      check results: ``check_results`` document + metrics API schemas
     reliability  reliability reports (computed on read, no dedicated collection)
     notification webhook deliveries: ``notifications`` document + API schemas
+    public       public status page payloads (sanitized, no auth)
+    dashboard    role-shaped dashboard payloads
 
 Example:
     from schemas.auth import RegisterRequest, UserDocument
@@ -16,6 +18,28 @@ Example:
     from schemas.state import StateConfigUpsertRequest, STATE_COLORS
 """
 
-from . import auth, catalogue, common, incidents, metrics, notification, reliability, state
+from . import (
+    auth,
+    catalogue,
+    common,
+    dashboard,
+    incidents,
+    metrics,
+    notification,
+    public,
+    reliability,
+    state,
+)
 
-__all__ = ["auth", "catalogue", "common", "incidents", "metrics", "notification", "reliability", "state"]
+__all__ = [
+    "auth",
+    "catalogue",
+    "common",
+    "dashboard",
+    "incidents",
+    "metrics",
+    "notification",
+    "public",
+    "reliability",
+    "state",
+]

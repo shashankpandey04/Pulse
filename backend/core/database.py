@@ -105,6 +105,12 @@ def update_one(collection: str, query: dict[str, Any], sets: dict[str, Any]) -> 
     return result.matched_count > 0
 
 
+def update_push(collection: str, query: dict[str, Any], sets: dict[str, Any], push_field: str, push_value: Any) -> bool:
+    """``$set`` + ``$push`` in one atomic update; returns True when a document matched."""
+    result = get_db()[collection].update_one(query, {"$set": sets, "$push": {push_field: push_value}})
+    return result.matched_count > 0
+
+
 def delete_one(collection: str, query: dict[str, Any]) -> bool:
     result = get_db()[collection].delete_one(query)
     return result.deleted_count > 0
