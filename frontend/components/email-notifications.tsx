@@ -15,7 +15,7 @@
 
 import { useState } from "react";
 import { apiFetch } from "@/lib/client";
-import { EmailSubscriptionSchema, type EmailSubscription } from "@/lib/schemas";
+import { EmailSubscriptionSchema, EmailSubscriptionStatusSchema, type EmailSubscription } from "@/lib/schemas";
 import { Notice, PrimaryButton, SecondaryButton } from "@/components/ui";
 
 type Summary = { subscribed: boolean; email: string | null };
@@ -63,6 +63,27 @@ export function EmailNotifications({ required, summary }: Props) {
     }
   }
 
+  async function refresh() {
+    setBusy(true);
+    try {
+      const status = EmailSubscriptionStatusSchema.parse(
+        await apiFetch<unknown>("/api/email-subscriptions"),
+      );
+      if (status.subscription) {
+        setState({ subscribed: true, email: status.subscription.email });
+        setStats(status.subscription);
+      } else {
+        setState({ subscribed: false, email: null });
+        setStats(null);
+      }
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not load subscription state.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const missingRequired = required && !state.subscribed;
 
   return (
@@ -99,6 +120,9 @@ export function EmailNotifications({ required, summary }: Props) {
               <span className="font-mono text-xs text-muted">subscribed</span>
               <SecondaryButton type="button" onClick={unsubscribe} disabled={busy}>
                 {busy ? "Working…" : "Unsubscribe"}
+              </SecondaryButton>
+              <SecondaryButton type="button" onClick={refresh} disabled={busy}>
+                Refresh delivery stats
               </SecondaryButton>
             </>
           )}

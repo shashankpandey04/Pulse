@@ -1,10 +1,15 @@
 """APScheduler wiring: the health-check CRON on FastAPI's asyncio event loop.
 
 An ``AsyncIOScheduler`` is started inside the FastAPI lifespan (startup) and
-shut down on exit. Its job is a short *sweep* every ``SWEEP_INTERVAL_SECONDS``:
+shut down on exit. Two jobs run every ``SWEEP_INTERVAL_SECONDS``:
 
-    for each enabled service whose ``monitoring.next_check_at`` is due:
-        claim it atomically and run its check as an independent asyncio task
+    health sweep   for each enabled service whose ``monitoring.next_check_at``
+                   is due: claim it atomically and run its check as an
+                   independent asyncio task
+
+    mail dispatch  deliver the due ``mail_outbox`` rows (state-change emails
+                   queued by the checks) — retries with backoff, survives
+                   restarts
 
 Consequences of this design:
     - every service runs on **its own schedule** (``check_interval_seconds``),
@@ -26,7 +31,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from schemas.catalogue import COLLECTION_SERVICES
 
-from . import database
+from . import database, mailer
 from .health_check import drain_notifications, run_check, utcnow
 
 logger = logging.getLogger("pulse.scheduler")
@@ -79,14 +84,36 @@ async def _check_isolated(service: dict) -> None:
         logger.exception("health check crashed for service %s", service["service_id"])
 
 
+async def run_mail_dispatch() -> None:
+    """Deliver due state-change mails queued by the checks (Task 8).
+
+    A no-op unless the outbox has due rows and SMTP is configured; rows that
+    cannot be delivered go back to ``pending`` with a backed-off
+    ``next_attempt_at`` until the retry budget is exhausted.
+    """
+    try:
+        await mailer.process_outbox()
+    except Exception:
+        logger.exception("mail dispatch crashed")
+
+
 def build_scheduler() -> AsyncIOScheduler:
-    """The scheduler with the sweep job registered (not yet started)."""
+    """The scheduler with the sweep + mail dispatch jobs (not yet started)."""
     scheduler = AsyncIOScheduler()
     scheduler.add_job(
         run_sweep,
         trigger=IntervalTrigger(seconds=SWEEP_INTERVAL_SECONDS),
         id="health-sweep",
         name="Health check sweep",
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=MISFIRE_GRACE_SECONDS,
+    )
+    scheduler.add_job(
+        run_mail_dispatch,
+        trigger=IntervalTrigger(seconds=SWEEP_INTERVAL_SECONDS),
+        id="mail-dispatch",
+        name="Mail outbox dispatch",
         max_instances=1,
         coalesce=True,
         misfire_grace_time=MISFIRE_GRACE_SECONDS,

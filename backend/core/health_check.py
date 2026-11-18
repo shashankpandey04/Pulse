@@ -176,16 +176,11 @@ _pending_notify: set[asyncio.Task] = set()
 _pending_push: set[asyncio.Task] = set()
 """FCM fan-out tasks awaiting completion; drained alongside the webhook tasks."""
 
-_pending_mail: set[asyncio.Task] = set()
-"""Email fan-out tasks awaiting completion; drained alongside the webhook tasks."""
-
 
 async def drain_notifications() -> None:
-    """Wait for outstanding webhook deliveries, FCM pushes and emails."""
-    if _pending_notify or _pending_push or _pending_mail:
-        await asyncio.gather(
-            *list(_pending_notify), *list(_pending_push), *list(_pending_mail), return_exceptions=True
-        )
+    """Wait for outstanding webhook deliveries and FCM pushes so they are never cut short."""
+    if _pending_notify or _pending_push:
+        await asyncio.gather(*list(_pending_notify), *list(_pending_push), return_exceptions=True)
 
 
 def _push_state_change(service: dict, previous: HealthState, state: HealthState, incident_id: str | None) -> None:
@@ -225,39 +220,21 @@ def _push_state_change(service: dict, previous: HealthState, state: HealthState,
 
 
 def _mail_state_change(service: dict, previous: HealthState, state: HealthState, incident_id: str | None) -> None:
-    """Email one service state change to every subscribed account (Task 7).
+    """Queue one state-change email for every subscribed account (Task 8).
 
-    Same fire-and-forget pattern as the FCM fan-out above: one tracked task,
-    failures logged and never raised. Skipped entirely when the SMTP
-    credentials are not configured.
+    The **automated trigger**: the health-check CRON enqueues a durable row in
+    the ``mail_outbox`` collection right here in the check path, and the
+    scheduler's mail job (every sweep) delivers it — retrying on SMTP
+    failures, surviving restarts, and flushing anything queued while the
+    process was down on the next startup. Enqueue failures are logged, never
+    raised — monitoring must not break over notifications.
     """
-
-    async def _run() -> None:
-        try:
-            outcome = await mailer.send_state_change(
-                service["service_id"], service["name"], service.get("slug", ""), previous, state, incident_id
-            )
-            if outcome.get("skipped"):
-                logger.debug("mail skipped (%s)", outcome["skipped"])
-            else:
-                logger.info(
-                    "mail for %s: sent=%s failed=%s",
-                    service["name"], outcome.get("sent"), outcome.get("failed"),
-                )
-        except Exception as exc:
-            logger.warning("mail fan-out failed: %s", exc)
-
-    if not mailer.enabled():
-        return
     try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        # No running loop (e.g. scripted calls outside the app): run inline.
-        asyncio.run(_run())
-        return
-    task = loop.create_task(_run())
-    _pending_mail.add(task)
-    task.add_done_callback(_pending_mail.discard)
+        mailer.enqueue_state_change(
+            service["service_id"], service["name"], service.get("slug", ""), previous, state, incident_id
+        )
+    except Exception as exc:
+        logger.warning("mail enqueue failed: %s", exc)
 
 
 def open_incident(service: dict, cfg: ServiceStateDocument, state: HealthState, window_rate: float | None) -> dict:

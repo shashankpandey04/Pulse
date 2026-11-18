@@ -76,6 +76,13 @@ async def lifespan(app: FastAPI):
     _bootstrap_admin()
     fcm.init_firebase()
 
+    # Flush state-change mails queued while the process was down (no-op when
+    # SMTP is unconfigured — rows stay pending until credentials exist).
+    try:
+        await mailer.process_outbox()
+    except Exception:
+        logger.warning("startup mail flush failed", exc_info=True)
+
     http_client = httpx.AsyncClient(timeout=10.0)
     health_check.set_http_client(http_client)
 

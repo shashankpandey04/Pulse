@@ -11,6 +11,7 @@ from schemas.catalogue import COLLECTION_SERVICES
 from schemas.device import COLLECTION_DEVICE_TOKENS
 from schemas.email_subscription import COLLECTION_EMAIL_SUBSCRIPTIONS
 from schemas.incidents import COLLECTION_INCIDENTS
+from schemas.mail_outbox import COLLECTION_MAIL_OUTBOX
 from schemas.metrics import COLLECTION_CHECK_RESULTS
 from schemas.notification import COLLECTION_NOTIFICATIONS
 from schemas.state import COLLECTION_SERVICE_STATES
@@ -74,6 +75,9 @@ def ensure_indexes() -> None:
     # Email subscriptions: one per account (the account email is the address).
     db[COLLECTION_EMAIL_SUBSCRIPTIONS].create_index("uid", unique=True)
     db[COLLECTION_EMAIL_SUBSCRIPTIONS].create_index("email", unique=True)
+    # Mail outbox: the dispatcher's queue query (due pending rows first).
+    db[COLLECTION_MAIL_OUTBOX].create_index([("status", 1), ("next_attempt_at", 1)])
+    db[COLLECTION_MAIL_OUTBOX].create_index([("created_at", 1)])
     logger.info("database indexes ensured")
 
 

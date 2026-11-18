@@ -106,3 +106,6 @@ Update the backend and the following:
 - Save their email to database separately than firebase one for now.
 - When API state changes, send the email to all subscribed users.
 - Remove the Firebase Notification system only visually from frontend.
+
+*Task 8*
+Add automated trigger to send status mails if any API state changes in CRON job

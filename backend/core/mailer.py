@@ -19,16 +19,23 @@ documents and failures never break monitoring.
 import asyncio
 import logging
 import smtplib
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from typing import Any
 
 from schemas.auth import COLLECTION_USERS
 from schemas.email_subscription import COLLECTION_EMAIL_SUBSCRIPTIONS
+from schemas.mail_outbox import COLLECTION_MAIL_OUTBOX, MailOutboxDocument, OutboxProcessingResult
 
 from . import config, database
 
 logger = logging.getLogger("pulse.mailer")
+
+OUTBOX_MAX_ATTEMPTS = 5
+"""Retry budget per queued mail before it is marked ``failed``."""
+
+OUTBOX_RETRY_SECONDS = 60
+"""Backoff base: attempt N is retried N * OUTBOX_RETRY_SECONDS after the failure."""
 
 
 def enabled() -> bool:
@@ -139,3 +146,145 @@ async def send_state_change(
     return await asyncio.to_thread(
         send_state_change_blocking, service_id, service_name, slug, old_state, new_state, incident_id
     )
+
+
+# ---------------------------------------------------------------------------
+# Durable outbox (Task 8): enqueue on state change, CRON job delivers
+# ---------------------------------------------------------------------------
+
+
+def enqueue_state_change(
+    service_id: str,
+    service_name: str,
+    slug: str,
+    old_state: str,
+    new_state: str,
+    incident_id: str | None = None,
+) -> None:
+    """Queue one state-change mail — the durable automated trigger.
+
+    Called in the health-check path (inside the CRON sweep). A single fast
+    insert; delivery happens on the mail job's sweep, so an SMTP outage or a
+    process restart never loses a notification.
+    """
+    doc = MailOutboxDocument(
+        service_id=service_id,
+        service_name=service_name,
+        slug=slug,
+        old_state=old_state,
+        new_state=new_state,
+        incident_id=incident_id,
+    )
+    database.insert(COLLECTION_MAIL_OUTBOX, doc.model_dump(mode="json"))
+    logger.info(
+        "mail queued: %s %s -> %s (mail_id=%s)", service_name, old_state, new_state, doc.mail_id
+    )
+
+
+def _classify_outcome(outcome: dict[str, Any]) -> str:
+    """Map a fan-out outcome onto an outbox disposition.
+
+        "skipped" in outcome            -> skipped   (no audience at send time)
+        "error" in outcome              -> retry     (connection/login-level failure)
+        sent == 0 and failed > 0        -> retry     (every recipient failed individually)
+        otherwise                       -> sent      (per-recipient stats already recorded)
+    """
+    if outcome.get("skipped"):
+        return "skipped"
+    if outcome.get("error"):
+        return "retry"
+    if outcome.get("sent", 0) == 0 and outcome.get("failed", 0) > 0:
+        return "retry"
+    return "sent"
+
+
+def process_outbox_blocking(limit: int = 50) -> OutboxProcessingResult:
+    """Deliver due pending mails and update their rows (sync; the CRON job).
+
+    One row = one state-change event; the fan-out inside
+    ``send_state_change_blocking`` emails every current subscriber. Retryable
+    failures go back to ``pending`` with ``next_attempt_at`` backed off until
+    ``OUTBOX_MAX_ATTEMPTS`` is exhausted.
+    """
+    result = OutboxProcessingResult()
+    if not enabled():
+        # Credentials not configured (yet): leave everything pending — rows
+        # send automatically once SMTP is set up.
+        return result
+
+    now = datetime.now(timezone.utc)
+    rows = database.find_many(
+        COLLECTION_MAIL_OUTBOX,
+        {
+            "status": "pending",
+            "$or": [{"next_attempt_at": None}, {"next_attempt_at": {"$lte": now}}],
+        },
+        sort=[("created_at", 1)],
+        limit=limit,
+    )
+    for row in rows:
+        result.processed += 1
+        try:
+            outcome = send_state_change_blocking(
+                row["service_id"],
+                row["service_name"],
+                row.get("slug", ""),
+                row["old_state"],
+                row["new_state"],
+                row.get("incident_id"),
+            )
+        except Exception as exc:  # defensive: the sender normally swallows errors
+            outcome = {"sent": 0, "failed": 0, "error": f"{type(exc).__name__}: {exc}"}
+
+        disposition = _classify_outcome(outcome)
+        if disposition == "sent":
+            result.sent += 1
+            database.update_one(
+                COLLECTION_MAIL_OUTBOX,
+                {"mail_id": row["mail_id"]},
+                {"status": "sent", "sent_at": now, "last_error": None, "updated_at": now},
+            )
+        elif disposition == "skipped":
+            result.skipped += 1
+            database.update_one(
+                COLLECTION_MAIL_OUTBOX,
+                {"mail_id": row["mail_id"]},
+                {"status": "skipped", "updated_at": now},
+            )
+        else:
+            attempts = int(row.get("attempts", 0)) + 1
+            error = outcome.get("error") or f"{outcome.get('failed', 0)} of {outcome.get('failed', 0) + outcome.get('sent', 0)} recipients failed"
+            if attempts >= OUTBOX_MAX_ATTEMPTS:
+                result.failed += 1
+                database.update_one(
+                    COLLECTION_MAIL_OUTBOX,
+                    {"mail_id": row["mail_id"]},
+                    {"status": "failed", "attempts": attempts, "last_error": error, "updated_at": now},
+                )
+                logger.warning("mail %s failed after %d attempts: %s", row["mail_id"], attempts, error)
+            else:
+                result.retried += 1
+                retry_at = now + timedelta(seconds=OUTBOX_RETRY_SECONDS * attempts)
+                database.update_one(
+                    COLLECTION_MAIL_OUTBOX,
+                    {"mail_id": row["mail_id"]},
+                    {
+                        "attempts": attempts,
+                        "next_attempt_at": retry_at,
+                        "last_error": error,
+                        "updated_at": now,
+                    },
+                )
+    if result.processed:
+        logger.info(
+            "mail outbox: processed=%d sent=%d retried=%d failed=%d skipped=%d",
+            result.processed, result.sent, result.retried, result.failed, result.skipped,
+        )
+    return result
+
+
+async def process_outbox(limit: int = 50) -> OutboxProcessingResult:
+    """Async wrapper around the blocking outbox processor (runs it in a thread)."""
+    if not enabled():
+        return OutboxProcessingResult()
+    return await asyncio.to_thread(process_outbox_blocking, limit)
