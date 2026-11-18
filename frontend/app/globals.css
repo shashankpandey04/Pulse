@@ -1,26 +1,40 @@
 @import "tailwindcss";
 
+/* Pulse theme: minimal black & white, high contrast, boxy (no rounded corners,
+   no shadows, no pills). State colors come from the backend payload itself. */
+
 :root {
   --background: #ffffff;
-  --foreground: #171717;
+  --foreground: #0a0a0a;
+  --border: #d4d4d4;
+  --muted: #525252;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-edge: var(--border);
+  --color-muted: var(--muted);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --radius-none: 0px;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans), Arial, Helvetica, sans-serif;
+}
+
+/* Every interactive element keeps square corners and a visible border. */
+input,
+select,
+textarea,
+button {
+  border-radius: 0;
+}
+
+*:focus-visible {
+  outline: 2px solid var(--foreground);
+  outline-offset: 1px;
 }

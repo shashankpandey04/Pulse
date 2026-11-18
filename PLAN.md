@@ -59,10 +59,24 @@ To create the required schemas for Incidents, Metrics, Reliability.
 3) Reliability: Show each service's availability over time against its target, and how much room for failure is left.
 4) Notifications: Notify the webhook receiver when an incident opens and when it resolves.
 
-*Task 3: Implementation of incidents/metrics/reliability/public routers + dashboard API with RBAC
+*Task 3*
+Implementation of incidents/metrics/reliability/public routers + dashboard API with RBAC
 
 Now we will implement the API Endpoints which are required to view/update/create the operations as per the module with respect to their roles.
 
 Along with that, also implement Dashboard API, which returns the data as per user roles.
 
 After that we will move to frontend development mainly. With a few part of backend development.
+
+*Task 4*
+Now let's create the frontend for this project.
+Tech Stack: NextJS + Zod
+
+Instructions: 
+- The frontend should be minimal black & white.
+- No unwanted UI Badge, Pills
+- It should have good contrast, with boxy UI.
+- Carefully implement the backend API integration.
+- Don't directly call the Backend API Endpoints from pages. Create seperate self hosted NextJS API's to connect with backend API endpoints.
+- Don't add and run unnecessary tests, animations, library. Only add those which are actually necessary for the frontend.
+- And cover & build all the necessary pages which are required for fully functional website. 
