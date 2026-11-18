@@ -111,3 +111,22 @@ Next: decide on the lint follow-up; then remaining backend bits if still wanted 
 Verification (fresh DB `pulse_t5`, dropped afterwards; throwaway helper scripts removed): devices API 16 checks (masked 201 register, list, multiple devices per user, role-shaped dashboard summaries — subscriber optional/staff mandatory, upsert re-assignment, cross-user delete 404, own unsubscribe 204, short-token 422, anonymous 401); FCM wiring: with a locally generated service account the sender enabled, a real CRON `healthy→down` transition fanned out to all registered devices, Google rejected the fake credential and every device's `fail_count`/`last_error` recorded it (backend stayed healthy); uptime bars via the real endpoints: 24 hourly + 30 daily buckets, pure-failure bucket red `#EF4444`, pure-success green `#22C55E` (avg latency correct), mixed bucket maroon `#800000`, no-data gray `#D4D4D4`; frontend production build green (now 27 routes + Proxy), status page renders the bars + legend + colors, detail page renders the 30-day panel, BFF devices routes (register/list/unsubscribe/422/401), dashboards surface the subscription panel with the "required for staff" notice for operators and the optional variant for subscribers. Default `down` threshold observed as 3 consecutive failures (Task 4's suite had configured 2 explicitly).
 
 Next: the lint follow-up (restructure the panels' initial fetch or scope-disable `set-state-in-effect`), then optional backend bits (acknowledged/note webhook events, `OptionalUser` wiring).
+
+## Task 6 — Native notification permission flow (pending)
+
+Problem (user report): clicking **Subscribe this device** answered with the generic "Notification permission was not granted — subscriptions need it to deliver pushes." Diagnosis: browsers resolve `requestPermission()` instantly with `denied` or `default` when the site is hard-blocked or the prompt is silenced (Chrome/Edge "quieter permission UI" shows a bell icon instead of the prompt) — in those states no prompt is displayed at all, and the old code answered every outcome with one misleading message.
+
+Implemented so far in `components/notification-setup.tsx`:
+
+- `askNotificationPermission()` — a single JS call covering both the promise form and Safari's legacy callback form (no double prompt), invoked directly in the click handler so the browser treats it as a user gesture.
+- Outcome-specific handling: already `granted` → skip the ask and go straight to service worker registration → FCM `getToken` → `POST /api/devices`; `denied` → guidance to re-enable notifications in the browser's site settings (a blocked site is never re-prompted by the browser); `default` (dismissed or silenced) → guidance pointing at the bell icon in the address bar and to click Subscribe again. The browser's live `Notification.permission` is re-read after the ask and trusted over the resolved value (some browsers resolve `default` even after the user answers).
+- Firebase `getToken` rejections wrapped in a clearer message (the raw SDK wording, e.g. "Registration failed - permission denied" while the header showed "permission granted", is replaced by an explanation that incognito windows and some managed browsers block push entirely).
+
+Verified in a real (embedded) browser: the blocked-site guidance path, the granted path reaching the FCM token step, no console errors; production build green. The embedded test browser runs incognito (Chrome disables the Push API there) and denies notifications at profile level, so a true end-to-end granted flow (prompt → Allow → token stored → device row) could not be completed in it.
+
+Pending:
+
+- User-side confirmation: the prompt still resolves `default` in the user's browser (now answered with the silenced/dismissed guidance). Most likely cause: the site was hard-blocked by an earlier denial — resetting it in site settings restores the ask-on-click behavior; then one Subscribe click should show the native prompt and complete the flow (token saved, device row appears).
+- If quiet-prompting persists on the user's browser, add an in-page pre-prompt explanation (e.g. "you will be asked to allow notifications") before the ask, a known mitigation for silenced prompts.
+
+Next: resolve the pending user-side confirmation; on success, record the full granted-path verification and close out Task 6.

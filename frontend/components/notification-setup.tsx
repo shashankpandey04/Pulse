@@ -26,6 +26,36 @@ function formatWhen(value: string | null): string {
   return value ? new Date(value).toLocaleString() : "—";
 }
 
+const BLOCKED_MESSAGE =
+  "Notifications are blocked for this site. Re-enable them in the site settings (the icon at the left of the address in your browser), then click Subscribe again.";
+const PROMPT_INCOMPLETE_MESSAGE =
+  "The permission prompt was not completed — your browser may have dismissed it or silenced it (silenced prompts appear as a bell icon at the left of the address). Answer it there, then click Subscribe this device again and choose Allow.";
+
+/**
+ * Ask the user for the Notification permission via JS. Must be called from a
+ * user gesture (the Subscribe click handler) so the browser actually shows the
+ * prompt. Modern browsers resolve a promise; older Safari only invokes the
+ * callback overload — a single call covers both forms without double-prompting.
+ */
+function askNotificationPermission(): Promise<NotificationPermission> {
+  if (typeof Notification === "undefined") {
+    return Promise.resolve("denied");
+  }
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const settle = (value: NotificationPermission) => {
+      if (!settled) {
+        settled = true;
+        resolve(value);
+      }
+    };
+    const maybePromise = Notification.requestPermission((permission) => settle(permission));
+    if (typeof maybePromise?.then === "function") {
+      maybePromise.then(settle, reject);
+    }
+  });
+}
+
 export function NotificationSetup({ required }: Props) {
   const [devices, setDevices] = useState<DeviceToken[] | null>(null);
   const [permission, setPermission] = useState<NotificationPermission | "unsupported">("default");
@@ -80,12 +110,42 @@ export function NotificationSetup({ required }: Props) {
     setBusy(true);
     setError(null);
     try {
-      const permissionResult = await Notification.requestPermission();
-      setPermission(permissionResult);
-      if (permissionResult !== "granted") {
-        setError("Notification permission was not granted — subscriptions need it to deliver pushes.");
+      if (typeof Notification === "undefined") {
+        setPermission("unsupported");
+        setError("This browser does not support notifications.");
         return;
       }
+      setPermission(Notification.permission);
+
+      if (Notification.permission === "denied") {
+        // Browsers never re-show the prompt once a site is blocked; only the
+        // user can unblock it from the site settings.
+        setError(BLOCKED_MESSAGE);
+        return;
+      }
+      if (Notification.permission !== "granted") {
+        // Ask the user (this click is the required user gesture; the native
+        // prompt shows anchored to the address bar).
+        const decision = await askNotificationPermission();
+        // Trust the browser's live state over the resolved value: some
+        // browsers resolve "default" even when the user answered the prompt.
+        // (The cast defeats TS narrowing — the property may change during the
+        // await above.)
+        const live = Notification.permission as NotificationPermission;
+        const effective: NotificationPermission = live === "granted" ? "granted" : decision;
+        setPermission(effective);
+        if (effective === "denied") {
+          setError(BLOCKED_MESSAGE);
+          return;
+        }
+        if (effective !== "granted") {
+          setError(PROMPT_INCOMPLETE_MESSAGE);
+          return;
+        }
+      }
+
+      // Permission granted: register the service worker, fetch the FCM token
+      // and store it against this account.
       const { messagingIfSupported, ensureServiceWorker } = await import("@/lib/firebase");
       const { getToken } = await import("firebase/messaging");
       const registration = await ensureServiceWorker();
@@ -99,7 +159,17 @@ export function NotificationSetup({ required }: Props) {
         setError("Push is not configured (missing VAPID key).");
         return;
       }
-      const fcmToken = await getToken(messaging, { vapidKey, serviceWorkerRegistration: registration });
+      const fcmToken = await getToken(messaging, { vapidKey, serviceWorkerRegistration: registration }).catch(
+        (err: unknown) => {
+          // Firebase's own wording can be confusing (e.g. "Registration
+          // failed - permission denied" when the browser itself refuses push
+          // registration — incognito mode, managed profiles, …).
+          const detail = err instanceof Error ? err.message : "unknown error";
+          throw new Error(
+            `Could not get a push token from Firebase (${detail}). Incognito windows and some managed browsers block push entirely — try a regular browser window.`,
+          );
+        },
+      );
       const registered = await apiFetch<{ token_id: string }>("/api/devices", {
         method: "POST",
         body: JSON.stringify({ fcm_token: fcmToken }),

@@ -93,3 +93,7 @@ Instructions:
 
 *Instructions*
 - No unwanted testing, our only focus is on feature implementation.
+
+*Task 6*
+On clicking `Subscribe this device` on dashboard results new message: `Notification permission was not granted — subscriptions need it to deliver pushes.`
+Use JS to ask for permission of notification from user. Then proceed with Token saving and device registration.
