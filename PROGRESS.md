@@ -167,3 +167,27 @@ PULSE_SMTP_PASSWORD=<16-char App Password>   # Google Account → Security → 2
 Then: sign in on the dashboard → Subscribe by email → flip a service's state (e.g. point its health_url at a dead port, wait for the down transition) → each subscribed account should receive one individual email from the Gmail address.
 
 Next: user's manual mail-delivery test with real credentials; then the lint follow-up (restructure the panels' initial fetch or scope-disable `set-state-in-effect`) and optional backend bits (acknowledged/note webhook events, `OptionalUser` wiring).
+
+## Task 8 — Automated CRON trigger for status mails (done)
+
+The Task 7 fan-out fired inside the check task — a restart or an SMTP hiccup at that moment silently lost the notification. The automated trigger is now a **durable outbox pipeline** end to end inside the CRON:
+
+```
+health check (CRON sweep) ──▶ enqueue mail_outbox row (fast insert, never fails the check)
+                                       │
+mail dispatch (CRON job, every sweep) ─┘ delivers due rows → SMTP fan-out
+                                failure → retry with backoff (5 attempts, 60s × attempt)
+                                exhausted → status "failed" (kept, with last_error)
+                                no audience at send time → "skipped"
+```
+
+- `schemas/mail_outbox.py` — `MailOutboxDocument` (`mail_id`, service id/name/slug, old/new state, incident id) with lifecycle `pending → sent | failed | skipped` and `attempts`/`next_attempt_at` for the retry schedule. Indexes: `(status, next_attempt_at)` for the dispatcher query, `created_at` for FIFO.
+- `core/mailer.py` — `enqueue_state_change()` (called in the check path; a single fast insert) and `process_outbox()` (the dispatcher: picks due pending rows oldest-first, fans each out through the Task 7 sender, classifies the outcome — `sent` when any recipient got mail, `skipped` when there was no audience, retry with backoff otherwise; `last_error` recorded on every attempt). When SMTP is unconfigured the dispatcher is a no-op and rows simply wait — deliveries start automatically once credentials are set.
+- `core/health_check.py` — `_mail_state_change` now enqueues instead of firing a background task (the fire-and-forget `_pending_mail` set is gone; webhook + FCM fan-outs unchanged).
+- `core/scheduler.py` — second APScheduler job `mail-dispatch` alongside `health-sweep` (same 10s cadence, `max_instances=1`, `coalesce`), so delivery latency is at most one sweep and retries happen automatically.
+- `main.py` — startup flush: `process_outbox()` runs once at boot so anything queued while the process was down goes out immediately.
+- Frontend: the subscribed panel gained a "Refresh delivery stats" button (GET `/api/email-subscriptions`) so per-address `send_count`/`last_error` can be watched during manual testing.
+
+Verification: import + scheduler wiring (both jobs registered), and a logic self-check of the outbox state machine against a scratch DB with the sender stubbed — enqueue → dispatch (sent/partial-sent/skipped/retry classifications correct, `next_attempt_at` backed off, retry blocked until due, budget exhaustion marks `failed` with attempts == 5), dispatcher idle when the mailer is disabled (rows stay `pending`). Automated end-to-end SMTP delivery remains with the user's manual test (per the Task 7 arrangement — real Gmail App Password credentials are needed); note the last frontend production build was interrupted, so run `npm run build` before `next start` if serving the production bundle.
+
+Next: user's manual mail-delivery test with real credentials; then the lint follow-up (restructure the panels' initial fetch or scope-disable `set-state-in-effect`) and optional backend bits (acknowledged/note webhook events, `OptionalUser` wiring).

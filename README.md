@@ -40,13 +40,17 @@ frontend/   Next.js 16 (App Router, TypeScript, Tailwind 4) + Zod
   every attempt is recorded for auditing.
 - **Email (the user-facing channel)**: every account subscribes from its
   dashboard with its own account email (`email_subscriptions` collection —
-  stored separately from the FCM token store). On each state change the
-  backend emails every subscribed, active account individually (one message
-  per recipient; addresses are never shared between subscribers). Mail is
-  sent over SMTP — for Gmail, an **App Password** (`PULSE_SMTP_*`); without
-  credentials subscriptions still work and deliveries are skipped. Per-address
-  send/fail stats are kept. Staff (operator/admin) must stay subscribed;
-  `GET /dashboard` reports it via `email_notifications`.
+  stored separately from the FCM token store). The health-check CRON
+  **automatically triggers** the mail on every service state change — the
+  change is first written to a durable outbox (`mail_outbox` collection) and a
+  CRON job dispatches it, retrying on SMTP failures with backoff (5 attempts,
+  1-minute base) and flushing anything queued while the backend was down on
+  the next startup. Each subscribed, active account receives an individual
+  email (one message per recipient; addresses are never shared). Mail is sent
+  over SMTP — for Gmail, an **App Password** (`PULSE_SMTP_*`); without
+  credentials subscriptions still work and rows wait in the outbox until SMTP
+  is configured. Per-address send/fail stats are kept. Staff (operator/admin)
+  must stay subscribed; `GET /dashboard` reports it via `email_notifications`.
 - Firebase Cloud Messaging remains in the backend (`core/fcm.py`, devices API)
   in **dormant** form: the frontend no longer uses it and pushes only happen
   when a service account is configured.
@@ -92,7 +96,8 @@ frontend/   Next.js 16 (App Router, TypeScript, Tailwind 4) + Zod
             │                       FastAPI backend (uvicorn :8000)                     │
             │  auth · catalogue · states · devices · email-subscriptions · incidents    │
             │  metrics · reliability · notifications · public · dashboard · admin       │
-            │        ▲ APScheduler CRON (health checks, every 10s sweep)                │
+            │        ▲ APScheduler CRON, every 10s:  health sweep  ·  mail dispatch     │
+            │          (checks + state detection)    (mail_outbox → SMTP, retries)      │
             └───┬──────────────┬──────────────┬────────────────────────────────────────┘
                 │              │              │
              MongoDB      webhook receiver   SMTP (Gmail App Password)
@@ -232,11 +237,13 @@ backend/
     database.py         shared MongoClient + indexes
     dependencies.py     RBAC (CurrentUser / RequireStaff / RequireAdmin)
     jwt.py              token issue/verify
-    scheduler.py        APScheduler sweep loop
-    health_check.py     check execution, state machine, incidents, webhook + FCM fan-out
+    scheduler.py        APScheduler: health sweep + mail-dispatch jobs (every 10s)
+    health_check.py     check execution, state machine, incidents, webhook + FCM fan-out,
+                        mail-outbox enqueue (the automated mail trigger)
     analytics.py        metrics, reliability, dashboard summaries, uptime buckets
     fcm.py              Firebase Admin sender (dormant channel: per-device stats, stale-token pruning)
-    mailer.py           SMTP sender (email fan-out to subscribed accounts)
+    mailer.py           SMTP sender + durable mail outbox (enqueue on state change,
+                        CRON dispatch with retry/backoff, startup flush)
   routers/              one module per API area (see API overview)
   schemas/              Pydantic models per domain (documents + requests/responses)
 
