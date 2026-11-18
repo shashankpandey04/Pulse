@@ -28,3 +28,33 @@ Design the API Request & Reponse schema of Auth, Service Catalogue, Service Stat
 Go to `backend` folder in the project and under this create the schema in schemas folder.
 
 We will be using FastAPI, MongoDB (via pymongo), Pydantic, Pydantic[email], bcrypt for password hashing, uvicorn to run FastAPI Server.
+
+| Service | Address | Health check |
+| --- | --- | --- |
+| `quotes` | http://localhost:7001 | http://localhost:7001/health |
+| `payments` | http://localhost:7002 | http://localhost:7002/health |
+| `claims` | http://localhost:7003 | http://localhost:7003/health |
+| `notifications` | http://localhost:7004 | http://localhost:7004/health |
+| Webhook receiver | http://localhost:9900 | Stands in for chat, email and paging. Anything POSTed to it appears on its page. `GET /api/received` returns the list as JSON; `DELETE /api/received` clears it. |
+
+
+*Task 2*
+Create required client using pymongo in core/database.py
+
+Wire routers/auth.py, catalogue.py, and state.py to MongoDB with bcrypt hashing and role-based access.
+These API should have all required CRUD endpoints with role based access control.
+Create a central role based access in core/dependencies.py which will have all required function or decorator for RBAC.
+In core/jwt.py, write the required functions which are required to issue, verify JSON Web Tokens for the frontend client. For this use `jwt` library which is installed using `pip install pyjwt`
+After this write the routers/auth.py, catalogue.py & state.py
+
+Along with this our continued task is:
+Health Check CRON Job: It's job is to run the health checks from our service catalogue and perform required actions like automated open/close of indidents, it will run along with our FastAPI Using apscheduler (installed via `pip install apscheduler`) AsyncIOScheduler running directly on FastAPI's asyncio event loop inside FastAPI's lifespan context manager. Check every service on its own schedule, without one slow service holding up the others. Store every result.
+*Tip: Avoid the older @app.on_event("startup") decorator, as FastAPI recommends lifespan for managing startup and shutdown resources.*
+
+*To know:* Webhook receiver | http://localhost:9900 | Stands in for chat, email and paging. Anything POSTed to it appears on its page. `GET /api/received` returns the list as JSON
+
+To create the required schemas for Incidents, Metrics, Reliability.
+1) Incidents: Our CRON Job can open an incident automatically when a service goes down, and close it when it recovers. And someone can acknowledge it and add notes. Each incident has a timeline of what happened. Notes are by default saved as public. If marked public then it's also visible on public status page.
+2) Metrics: Shows how quickly problems are detected and resolved, and how the checking itself is performing.
+3) Reliability: Show each service's availability over time against its target, and how much room for failure is left.
+4) Notifications: Notify the webhook receiver when an incident opens and when it resolves.

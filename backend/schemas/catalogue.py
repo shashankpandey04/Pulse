@@ -26,6 +26,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, HttpUrl, model_validator
 
+from schemas.state import HealthState
+
 from .common import TimestampedModel, new_uid
 
 COLLECTION_SERVICES = "services"
@@ -38,6 +40,28 @@ SLUG_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 # ---------------------------------------------------------------------------
 # Database document
 # ---------------------------------------------------------------------------
+
+
+class ServiceMonitoring(BaseModel):
+    """Live monitoring counters for one service — written only by the CRON.
+
+    Embedded in ``ServiceDocument.monitoring``; the catalogue API never sets
+    these fields directly.
+    """
+
+    current_state: HealthState = Field(
+        default="healthy",
+        description="Last evaluated health state (healthy/down/slow/flaky).",
+    )
+    consecutive_failures: int = Field(default=0, description="Failed checks in a row right now.")
+    consecutive_successes: int = Field(default=0, description="Successful checks in a row right now.")
+    last_check_at: datetime | None = Field(default=None, description="When the last check ran.")
+    last_latency_ms: int | None = Field(default=None, description="Latency of the last completed check.")
+    last_error: str | None = Field(default=None, description="Error message of the last failed check.")
+    next_check_at: datetime | None = Field(
+        default=None,
+        description="When this service is next due for a check (its own schedule).",
+    )
 
 
 class ServiceDocument(TimestampedModel):
@@ -96,6 +120,17 @@ class ServiceDocument(TimestampedModel):
         default=True,
         description="When False the monitor pauses checks for this service.",
     )
+    monitoring: ServiceMonitoring = Field(
+        default_factory=ServiceMonitoring,
+        description="Live check counters maintained by the health-check CRON.",
+    )
+
+    @model_validator(mode="after")
+    def timeout_must_be_shorter_than_interval(self) -> "ServiceDocument":
+        """A single check must time out well before the next check is due."""
+        if self.timeout_seconds >= self.check_interval_seconds:
+            raise ValueError("timeout_seconds must be smaller than check_interval_seconds")
+        return self
 
 
 # ---------------------------------------------------------------------------

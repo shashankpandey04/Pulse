@@ -3,3 +3,6 @@ uvicorn
 bcrypt
 pymongo
 pydantic[email]
+pyjwt
+apscheduler
+httpx

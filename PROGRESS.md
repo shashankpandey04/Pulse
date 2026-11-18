@@ -12,4 +12,23 @@ Created `backend/schemas/` (Pydantic v2, for FastAPI + MongoDB/pymongo + bcrypt)
 
 Validation: throwaway script exercised all 21 models — 33 checks passed (valid payloads, defaults, and rejection of bad emails/short passwords/role smuggling on register/out-of-range flaky rate/timeout >= interval/extra fields).
 
-Next: Task 2 — DB client + routers (auth with bcrypt, catalogue, states) and wiring into a FastAPI app.
+## Task 2 — Core, RBAC, routers, health-check CRON (done)
+
+Core (`backend/core/`):
+- `config.py` — env-driven settings (mongo uri/db, JWT secret/alg/aud/iss, webhook url).
+- `database.py` — shared pymongo client (`tz_aware`), `get_db`, thin helpers (insert/find/count/update/delete), `ensure_indexes` (users/services/service_states + incidents/check_results/notifications), `close_client`.
+- `jwt.py` — PyJWT HS256: `create_access_token` (sub=uid, email, role, iat/exp, iss, aud) and `verify_access_token` raising `TokenError`.
+- `dependencies.py` — central RBAC: `get_current_user` (JWT -> live user, rejects deactivated), `require_roles(*roles)` factory, ready-made `CurrentUser` / `RequireStaff` (admin+operator) / `RequireAdmin`, plus soft `OptionalUser` for public endpoints.
+- `health_check.py` — one check per service via shared httpx client: stores `CheckResultDocument` (every result), evaluates state (`evaluate_state`: down > recovered-healthy > flaky (full-window failure rate incl. current check) > slow > keep previous), advances `services.monitoring.*`, auto-opens incidents on down/flaky (with timeline), escalates flaky->down on the open incident, auto-resolves on recovery, POSTs webhook notifications (recorded in `notifications` with delivered/error status).
+- `scheduler.py` — APScheduler `AsyncIOScheduler` + 10s sweep job: atomically claims due services (`monitoring.next_check_at`) and runs each check as an independent asyncio task (per-check timeout, no service blocks others); drains pending webhook posts.
+
+Routers:
+- `routers/auth.py` — register (bcrypt, role forced subscriber, 409 dup email), login (401 generic), `/auth/me`, admin: list (filters+pagination), PATCH role/active (self-demotion/self-deactivation guarded), DELETE (soft delete). First admin bootstrapped from `PULSE_ADMIN_EMAIL/PASSWORD` env at startup.
+- `routers/catalogue.py` — full CRUD (admin writes, staff reads), slug auto-derive, owner email -> uid resolution (404 unknown), duplicate 409, PATCH re-validates merged doc (timeout < interval), delete also removes state config; service creation provisions default state config.
+- `routers/state.py` — PUT upsert / PATCH partial / GET effective (defaults when unstored) / list / DELETE reset (admin only); one config per service keyed by `service_id`.
+
+App: `main.py` — FastAPI with lifespan (indexes -> httpx client -> scheduler start -> admin bootstrap; shutdown: scheduler stop, drain notifications, close client). Schemas added: `incidents.py` (IncidentDocument w/ embedded timeline, ack/note/resolve requests, responses), `metrics.py` (CheckResultDocument + ServiceMetricsResponse MTTD/MTTR), `reliability.py` (availability vs target + error budget), `notification.py` (webhook delivery records).
+
+Verification: `D:\Pulse\smoke_task2.py` against real local Mongo (test db `pulse_test`) + local fixture HTTP server — 38 checks passed: auth/RBAC flows (401/403/409/404 paths), catalogue & states CRUD, and the CRON: down after 3 failed checks -> incident auto-opened + webhook recorded; recovery after 2 successes -> incident auto-resolved + webhook recorded; flaky detection with tight window; second service scheduled independently; tampered token rejected; OpenAPI paths sane.
+
+Next: Task 3 — incidents/metrics/reliability/public/notification routers + dashboard aggregation.
