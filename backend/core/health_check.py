@@ -2,8 +2,9 @@
 
 Pure evaluation logic lives here plus the side effects it triggers:
 store the ``CheckResultDocument``, advance the service's monitoring counters,
-open/append/resolve incidents, and POST notifications to the webhook receiver
-(``http://localhost:9900``) when an incident opens or resolves.
+open/append/resolve incidents, POST notifications to the webhook receiver
+(``http://localhost:9900``) when an incident opens or resolves, and push the
+state change to every subscribed device over FCM (``core/fcm.py``).
 
 The scheduler (``core/scheduler.py``) decides *when* each service is checked;
 this module decides *what a check means*.
@@ -22,7 +23,7 @@ from schemas.metrics import COLLECTION_CHECK_RESULTS, CheckResultDocument
 from schemas.notification import COLLECTION_NOTIFICATIONS, NotificationDocument
 from schemas.state import COLLECTION_SERVICE_STATES, HealthState, ServiceStateDocument
 
-from . import config, database
+from . import config, database, fcm
 
 logger = logging.getLogger("pulse.monitor")
 
@@ -172,11 +173,50 @@ def _notify(event_type: str, service: dict, incident: dict | None, message: str,
 _pending_notify: set[asyncio.Task] = set()
 """Webhook POST tasks awaiting completion; drained by the sweep and on shutdown."""
 
+_pending_push: set[asyncio.Task] = set()
+"""FCM fan-out tasks awaiting completion; drained alongside the webhook tasks."""
+
 
 async def drain_notifications() -> None:
-    """Wait for outstanding webhook deliveries so they are never cut short."""
-    if _pending_notify:
-        await asyncio.gather(*list(_pending_notify), return_exceptions=True)
+    """Wait for outstanding webhook deliveries and FCM pushes so they are never cut short."""
+    if _pending_notify or _pending_push:
+        await asyncio.gather(*list(_pending_notify), *list(_pending_push), return_exceptions=True)
+
+
+def _push_state_change(service: dict, previous: HealthState, state: HealthState, incident_id: str | None) -> None:
+    """Fan one service state change out to every subscribed device via FCM.
+
+    Follows the same fire-and-forget pattern as the webhook ``_notify``: a task
+    per push, tracked so the sweep/shutdown can drain it. Failures are logged,
+    never raised — monitoring must not break over notifications.
+    """
+
+    async def _run() -> None:
+        try:
+            outcome = await fcm.send_state_change(
+                service["service_id"], service["name"], previous, state, incident_id
+            )
+            if outcome.get("skipped"):
+                logger.debug("fcm push skipped (%s)", outcome["skipped"])
+            else:
+                logger.info(
+                    "fcm push for %s: sent=%s failed=%s pruned=%s",
+                    service["name"], outcome.get("sent"), outcome.get("failed"), outcome.get("pruned"),
+                )
+        except Exception as exc:
+            logger.warning("fcm push failed: %s", exc)
+
+    if not fcm.enabled():
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        # No running loop (e.g. scripted calls outside the app): run inline.
+        asyncio.run(_run())
+        return
+    task = loop.create_task(_run())
+    _pending_push.add(task)
+    task.add_done_callback(_pending_push.discard)
 
 
 def open_incident(service: dict, cfg: ServiceStateDocument, state: HealthState, window_rate: float | None) -> dict:
@@ -321,7 +361,12 @@ async def run_check(service: dict) -> CheckResultDocument | None:
         consecutive_successes=consecutive_successes,
     )
 
-    _apply_incident_consequences(service, cfg, previous, state, rate)
+    incident = _apply_incident_consequences(service, cfg, previous, state, rate)
+    if state != previous:
+        # Any state change (healthy->down, down->healthy, flaky<->slow, …) is
+        # pushed to every subscribed device; the incident id (when one was
+        # opened/escalated by the consequences above) tags the message.
+        _push_state_change(service, previous, state, (incident or {}).get("incident_id"))
     logger.info(
         "check %s -> %s (success=%s latency=%s error=%s)", service_id, state, success, latency_ms, error
     )
@@ -334,16 +379,19 @@ def _apply_incident_consequences(
     previous: HealthState,
     state: HealthState,
     window_rate: float,
-) -> None:
-    """Open / annotate / resolve incidents based on the state transition."""
+) -> dict | None:
+    """Open / annotate / resolve incidents based on the state transition.
+
+    Returns the incident document that was touched (opened, escalated or
+    resolved), or ``None`` when nothing changed / there was none to touch.
+    """
     if state == previous:
-        return
+        return None
 
     incident = _find_open_incident(service["service_id"])
 
     if state in ("down", "flaky") and incident is None:
-        open_incident(service, cfg, state, window_rate)
-        return
+        return open_incident(service, cfg, state, window_rate)
 
     if incident is not None:
         if state == "healthy":
@@ -368,6 +416,8 @@ def _apply_incident_consequences(
                     at=utcnow(),
                 ),
             )
+        return incident
+    return None
 
 
 async def check_service_by_id(service_id: str) -> CheckResultDocument | None:

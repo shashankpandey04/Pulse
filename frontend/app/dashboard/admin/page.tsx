@@ -3,6 +3,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { SiteHeader } from "@/components/site-header";
 import { AccessPanel } from "@/components/access-panel";
+import { NotificationSetup } from "@/components/notification-setup";
 import { Panel, Stat } from "@/components/ui";
 import { UsersPanel } from "@/components/users-panel";
 import { ServicesPanel } from "@/components/services-panel";
@@ -116,6 +117,8 @@ export default async function AdminDashboardPage() {
         </div>
 
         <UsersPanel selfUid={admin.uid} />
+
+        <NotificationSetup required />
 
         <ServicesPanel canManage />
 

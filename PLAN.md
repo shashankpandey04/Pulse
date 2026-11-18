@@ -80,3 +80,16 @@ Instructions:
 - Don't directly call the Backend API Endpoints from pages. Create seperate self hosted NextJS API's to connect with backend API endpoints.
 - Don't add and run unnecessary tests, animations, library. Only add those which are actually necessary for the frontend.
 - And cover & build all the necessary pages which are required for fully functional website. 
+
+*Task 5*
+- Implemenet public uptime history bars on the status page.
+- Implement Firebase based notification service.
+1) Subscribers can subscribe for notifications via their dashboard.
+2) For Operator & Admin it's mandatory to subscribe for notification via their dashboard.
+3) Each user can have multiple notification subscriptions for each device.
+4) If any API state changes, our CRON Jobs send notifications to all subscribed users about the state change for which API.
+5) Save the FCM Token of Firebase in the database.
+6) Design the database & API schema for tokens. 
+
+*Instructions*
+- No unwanted testing, our only focus is on feature implementation.

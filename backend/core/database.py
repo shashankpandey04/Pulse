@@ -8,6 +8,7 @@ from pymongo.database import Database
 
 from schemas.auth import COLLECTION_USERS
 from schemas.catalogue import COLLECTION_SERVICES
+from schemas.device import COLLECTION_DEVICE_TOKENS
 from schemas.incidents import COLLECTION_INCIDENTS
 from schemas.metrics import COLLECTION_CHECK_RESULTS
 from schemas.notification import COLLECTION_NOTIFICATIONS
@@ -66,6 +67,9 @@ def ensure_indexes() -> None:
     db[COLLECTION_INCIDENTS].create_index([("status", 1), ("opened_at", -1)])
     db[COLLECTION_CHECK_RESULTS].create_index([("service_id", 1), ("checked_at", -1)])
     db[COLLECTION_NOTIFICATIONS].create_index([("created_at", -1)])
+    # Push-notification devices: one registration per FCM token, listed per user.
+    db[COLLECTION_DEVICE_TOKENS].create_index("fcm_token", unique=True)
+    db[COLLECTION_DEVICE_TOKENS].create_index([("uid", 1), ("created_at", -1)])
     logger.info("database indexes ensured")
 
 

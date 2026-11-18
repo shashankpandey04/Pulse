@@ -334,6 +334,17 @@ export const PublicStatusEventSchema = z.object({
   at: isoDatetime,
 });
 
+/** One uptime bar: check outcomes over a time bucket (backend-computed colors). */
+export const UptimeBucketSchema = z.object({
+  start: isoDatetime,
+  total_checks: z.number().int(),
+  failed_checks: z.number().int(),
+  success_rate: z.number().nullable(),
+  avg_latency_ms: z.number().nullable(),
+  color: z.string(),
+});
+export type UptimeBucket = z.infer<typeof UptimeBucketSchema>;
+
 export const PublicIncidentSchema = z.object({
   incident_id: id,
   title: z.string(),
@@ -354,6 +365,7 @@ export const PublicServiceStatusSchema = z.object({
   color: z.string(),
   last_check_at: isoDatetime.nullable(),
   last_latency_ms: z.number().int().nullable(),
+  history: z.array(UptimeBucketSchema).default([]), // hourly bars, last 24 hours
 });
 
 export const PublicStatusSchema = z.object({
@@ -368,8 +380,39 @@ export type PublicStatus = z.infer<typeof PublicStatusSchema>;
 export const PublicServiceDetailSchema = z.object({
   service: PublicServiceStatusSchema,
   incidents: z.array(PublicIncidentSchema),
+  daily_history: z.array(UptimeBucketSchema).default([]), // daily bars, last 30 days
 });
 export type PublicServiceDetail = z.infer<typeof PublicServiceDetailSchema>;
+
+/* -----------------------------------------------------------------------------
+ * Push devices (Firebase Cloud Messaging tokens)
+ * --------------------------------------------------------------------------- */
+
+export const DeviceTokenCreateInputSchema = z.object({
+  fcm_token: z.string().min(16).max(4096),
+  device_label: z.string().max(100).optional(),
+});
+export type DeviceTokenCreateInput = z.infer<typeof DeviceTokenCreateInputSchema>;
+
+export const DeviceTokenSchema = z.object({
+  token_id: id,
+  token_preview: z.string(),
+  device_label: z.string().nullable(),
+  user_agent: z.string().nullable(),
+  created_at: isoDatetime,
+  updated_at: isoDatetime,
+  last_sent_at: isoDatetime.nullable(),
+  send_count: z.number().int(),
+  fail_count: z.number().int(),
+  last_error: z.string().nullable(),
+});
+export type DeviceToken = z.infer<typeof DeviceTokenSchema>;
+
+export const DeviceTokenListSchema = z.object({
+  total: z.number().int(),
+  tokens: z.array(DeviceTokenSchema),
+});
+export type DeviceTokenList = z.infer<typeof DeviceTokenListSchema>;
 
 /* -----------------------------------------------------------------------------
  * Dashboard
@@ -395,6 +438,13 @@ export const DashboardSchema = z.object({
     .nullable(),
   notifications_summary: z
     .object({ total: z.number().int(), delivered: z.number().int(), failed: z.number().int() })
+    .nullable(),
+  devices: z
+    .object({
+      total: z.number().int(),
+      notifications_required: z.boolean(),
+      fcm_enabled: z.boolean(),
+    })
     .nullable(),
 });
 export type Dashboard = z.infer<typeof DashboardSchema>;

@@ -22,6 +22,37 @@ class PublicStatusEvent(BaseModel):
     at: datetime
 
 
+class UptimeBucket(BaseModel):
+    """One uptime bar: check outcomes aggregated over a time bucket.
+
+    Buckets without any stored checks carry ``success_rate=None`` and render in
+    a neutral gray. Colors follow ``schemas.state.STATE_COLORS`` (plus gray for
+    "no data"), computed by ``core.analytics``.
+    """
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "start": "2026-11-18T13:00:00Z",
+                    "total_checks": 60,
+                    "failed_checks": 3,
+                    "success_rate": 0.95,
+                    "avg_latency_ms": 212.4,
+                    "color": "#800000",
+                }
+            ]
+        }
+    }
+
+    start: datetime = Field(description="Start of the bucket (UTC).")
+    total_checks: int
+    failed_checks: int
+    success_rate: float | None = Field(default=None, description="1.0 when nothing failed; None when no checks ran.")
+    avg_latency_ms: float | None = Field(default=None, description="Mean latency of successful checks in the bucket.")
+    color: str = Field(description="Hex color the status page renders this bar in.")
+
+
 class PublicIncident(BaseModel):
     """An incident as shown on the public status page (public events only)."""
 
@@ -48,6 +79,10 @@ class PublicServiceStatus(BaseModel):
     color: str = Field(description="Hex color for the state badge.")
     last_check_at: datetime | None = None
     last_latency_ms: int | None = None
+    history: list[UptimeBucket] = Field(
+        default_factory=list,
+        description="Hourly uptime bars for the last 24 hours (oldest first).",
+    )
 
 
 class PublicStatusResponse(BaseModel):
@@ -79,3 +114,7 @@ class PublicServiceDetail(BaseModel):
 
     service: PublicServiceStatus
     incidents: list[PublicIncident] = Field(description="Recent incidents (public events only), newest first.")
+    daily_history: list[UptimeBucket] = Field(
+        default_factory=list,
+        description="Daily uptime bars for the last 30 days (oldest first).",
+    )

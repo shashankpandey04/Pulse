@@ -15,11 +15,11 @@ from contextlib import asynccontextmanager
 import httpx
 from fastapi import FastAPI
 
-from core import database, health_check
+from core import database, fcm, health_check
 from core import config
 from core.health_check import drain_notifications
 from core.scheduler import build_scheduler
-from routers import auth, catalogue, dashboard, incidents, metrics, notification, public, reliability, state
+from routers import auth, catalogue, dashboard, devices, incidents, metrics, notification, public, reliability, state
 
 logging.basicConfig(
     level=logging.INFO,
@@ -62,6 +62,7 @@ async def lifespan(app: FastAPI):
     # --- startup -------------------------------------------------------------
     database.ensure_indexes()
     _bootstrap_admin()
+    fcm.init_firebase()
 
     http_client = httpx.AsyncClient(timeout=10.0)
     health_check.set_http_client(http_client)
@@ -93,6 +94,7 @@ app = FastAPI(
 app.include_router(auth.router)
 app.include_router(catalogue.router)
 app.include_router(state.router)
+app.include_router(devices.router)
 app.include_router(incidents.router)
 app.include_router(metrics.router)
 app.include_router(reliability.router)

@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { SiteHeader } from "@/components/site-header";
+import { NotificationSetup } from "@/components/notification-setup";
 import { StateLabel, Panel, Stat } from "@/components/ui";
 import { pageApi, PageApiError } from "@/lib/server-api";
 import { DashboardSchema, UserResponseSchema } from "@/lib/schemas";
@@ -68,6 +69,7 @@ export default async function DashboardPage() {
   return (
     <>
       <SiteHeader />
+      <NotificationSetup required={false} />
       <SubscriberView />
     </>
   );

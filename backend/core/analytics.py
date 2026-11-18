@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from schemas.dashboard import IncidentSummary, NotificationsSummary, UsersSummary
+from schemas.device import COLLECTION_DEVICE_TOKENS, DevicesSummary
 from schemas.incidents import COLLECTION_INCIDENTS
 from schemas.metrics import (
     COLLECTION_CHECK_RESULTS,
@@ -24,7 +25,9 @@ from schemas.metrics import (
 from schemas.notification import COLLECTION_NOTIFICATIONS
 from schemas.catalogue import COLLECTION_SERVICES
 from schemas.auth import COLLECTION_USERS
+from schemas.public import UptimeBucket
 from schemas.reliability import ReliabilityListResponse, ReliabilityResponse
+from schemas.state import COLLECTION_SERVICE_STATES, SlowPolicy, STATE_COLORS
 
 from . import database
 
@@ -244,3 +247,134 @@ def notifications_summary() -> NotificationsSummary:
     total = database.count(COLLECTION_NOTIFICATIONS)
     delivered = database.count(COLLECTION_NOTIFICATIONS, {"delivered": True})
     return NotificationsSummary(total=total, delivered=delivered, failed=total - delivered)
+
+
+def devices_summary(uid: str, role: str, fcm_enabled: bool) -> DevicesSummary:
+    """The caller's push-subscription state.
+
+    ``notifications_required`` encodes the Task 5 rule: operators and admins
+    must keep at least one device subscribed, subscribers opt in optionally.
+    """
+    total = database.count(COLLECTION_DEVICE_TOKENS, {"uid": uid})
+    return DevicesSummary(
+        total=total,
+        notifications_required=role in ("operator", "admin") and total == 0,
+        fcm_enabled=fcm_enabled,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Uptime history bars (public status page)
+# ---------------------------------------------------------------------------
+
+NO_DATA_COLOR = "#D4D4D4"
+"""Neutral gray for buckets in which no check ran (nothing to report)."""
+
+
+def _bucket_color(total: int, failed: int, avg_latency_ms: float | None, slow_threshold_ms: float) -> str:
+    """Map a bucket's outcome onto the status palette.
+
+    Same semantics as the live states: nothing failed -> healthy (green,
+    or slow/yellow when the mean latency exceeded the service's threshold),
+    every check failed -> down (red), partial failures -> flaky (maroon),
+    no checks -> neutral gray.
+    """
+    if total == 0:
+        return NO_DATA_COLOR
+    if failed == 0:
+        if avg_latency_ms is not None and avg_latency_ms > slow_threshold_ms:
+            return STATE_COLORS["slow"]
+        return STATE_COLORS["healthy"]
+    if failed == total:
+        return STATE_COLORS["down"]
+    return STATE_COLORS["flaky"]
+
+
+def uptime_history(
+    service_ids: list[str],
+    *,
+    granularity: str,
+    count: int,
+) -> dict[str, list[UptimeBucket]]:
+    """Check outcomes bucketed per service over the recent window.
+
+    ``checked_at`` is stored as an ISO string (JSON-mode documents), so buckets
+    are keyed by the string prefix — ``YYYY-MM-DDTHH`` for hourly buckets,
+    ``YYYY-MM-DD`` for daily ones — which is exactly the bucket identity and
+    sorts chronologically. One aggregation covers every requested service.
+
+    Returns ``{service_id: buckets}`` with a fixed-size bucket list per service
+    (oldest first), including empty buckets rendered in ``NO_DATA_COLOR``.
+    """
+    now = utcnow()
+    if granularity == "hour":
+        anchor = now.replace(minute=0, second=0, microsecond=0)
+        starts = [anchor - timedelta(hours=i) for i in range(count - 1, -1, -1)]
+        prefix_len = 13  # "YYYY-MM-DDTHH"
+    else:
+        anchor = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        starts = [anchor - timedelta(days=i) for i in range(count - 1, -1, -1)]
+        prefix_len = 10  # "YYYY-MM-DD"
+    since_iso = starts[0].isoformat()
+
+    pipeline = [
+        {"$match": {"checked_at": {"$gte": since_iso}}},
+        {
+            "$project": {
+                "service_id": 1,
+                "success": 1,
+                "latency_ms": 1,
+                "bucket": {"$substr": ["$checked_at", 0, prefix_len]},
+            }
+        },
+        {
+            "$group": {
+                "_id": {"service": "$service_id", "bucket": "$bucket"},
+                "total": {"$sum": 1},
+                "failed": {"$sum": {"$cond": ["$success", 0, 1]}},
+                "avg_latency": {"$avg": "$latency_ms"},
+            }
+        },
+    ]
+    grouped: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in database.get_db()[COLLECTION_CHECK_RESULTS].aggregate(pipeline):
+        grouped[(row["_id"]["service"], row["_id"]["bucket"])] = row
+
+    # Per-service slow threshold for coloring all-green-but-slow buckets.
+    slow_ms = {d["service_id"]: d.get("slow", {}).get("latency_ms") for d in database.find_many(COLLECTION_SERVICE_STATES)}
+    default_slow_ms = float(SlowPolicy().latency_ms)
+
+    keys = [s.strftime("%Y-%m-%dT%H" if granularity == "hour" else "%Y-%m-%d") for s in starts]
+    result: dict[str, list[UptimeBucket]] = {}
+    for service_id in service_ids:
+        buckets = []
+        for start, key in zip(starts, keys):
+            row = grouped.get((service_id, key))
+            total = int(row["total"]) if row else 0
+            failed = int(row["failed"]) if row else 0
+            avg_latency = float(row["avg_latency"]) if row and row["avg_latency"] is not None else None
+            threshold = float(slow_ms.get(service_id) or default_slow_ms)
+            buckets.append(
+                UptimeBucket(
+                    start=start,
+                    total_checks=total,
+                    failed_checks=failed,
+                    success_rate=(total - failed) / total if total else None,
+                    avg_latency_ms=round(avg_latency, 2) if avg_latency is not None else None,
+                    color=_bucket_color(total, failed, avg_latency, threshold),
+                )
+            )
+        result[service_id] = buckets
+    return result
+
+
+def status_page_histories(service_ids: list[str], hours: int = 24) -> dict[str, list[UptimeBucket]]:
+    """Hourly bars for the status-page list (``history`` per service)."""
+    if not service_ids:
+        return {}
+    return uptime_history(service_ids, granularity="hour", count=hours)
+
+
+def service_uptime_history(service_id: str, days: int = 30) -> list[UptimeBucket]:
+    """Daily bars for a single service's detail page (``daily_history``)."""
+    return uptime_history([service_id], granularity="day", count=days)[service_id]

@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 
 from .auth import Role
 from .catalogue import ServiceResponse
+from .device import DevicesSummary
 from .metrics import MetricsOverviewResponse
 from .public import PublicStatusResponse
 from .reliability import ReliabilityListResponse
@@ -94,4 +95,9 @@ class DashboardResponse(BaseModel):
     notifications_summary: NotificationsSummary | None = Field(
         default=None,
         description="Admin only: webhook delivery totals.",
+    )
+    devices: DevicesSummary | None = Field(
+        default=None,
+        description="The caller's push-subscription state (``notifications_required`` "
+        "is True for operators/admins who have no device registered yet).",
     )

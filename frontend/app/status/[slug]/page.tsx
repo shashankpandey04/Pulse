@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import { SiteHeader, HeaderFallback } from "@/components/site-header";
 import { StateLabel, Panel } from "@/components/ui";
+import { HistoryBars, HistoryLegend } from "@/components/history-bars";
 import { pageApi, PageApiError } from "@/lib/server-api";
 import { PublicServiceDetailSchema } from "@/lib/schemas";
 
@@ -19,7 +20,7 @@ async function ServiceContent({ params }: { params: Promise<{ slug: string }> })
     if (error instanceof PageApiError && error.status === 404) notFound();
     throw error;
   }
-  const { service, incidents } = detail;
+  const { service, incidents, daily_history: dailyHistory } = detail;
 
   return (
     <div className="flex flex-col gap-6">
@@ -34,7 +35,22 @@ async function ServiceContent({ params }: { params: Promise<{ slug: string }> })
           </span>
         </div>
         {service.description && <p className="mt-3 text-sm text-muted">{service.description}</p>}
+        {service.history.length > 0 && (
+          <div className="mt-4">
+            <div className="font-mono text-xs uppercase tracking-wide text-muted">Last 24 hours</div>
+            <div className="mt-1 max-w-2xl">
+              <HistoryBars buckets={service.history} granularity="hour" />
+            </div>
+          </div>
+        )}
       </Panel>
+
+      {dailyHistory.length > 0 && (
+        <Panel title="Uptime — last 30 days">
+          <HistoryBars buckets={dailyHistory} granularity="day" />
+          <HistoryLegend colors={{}} />
+        </Panel>
+      )}
 
       <Panel title="Incident history">
         {incidents.length === 0 ? (

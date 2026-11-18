@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import Link from "next/link";
 import { SiteHeader, HeaderFallback } from "@/components/site-header";
 import { StateLabel, Panel } from "@/components/ui";
+import { HistoryBars, HistoryLegend } from "@/components/history-bars";
 import { pageApi } from "@/lib/server-api";
 import { PublicStatusSchema } from "@/lib/schemas";
 
@@ -21,6 +22,7 @@ async function StatusContent() {
             <tr className="border-b border-edge text-left font-mono text-xs uppercase tracking-wide text-muted">
               <th className="py-2 pr-4">Service</th>
               <th className="py-2 pr-4">State</th>
+              <th className="py-2 pr-4">Last 24 hours</th>
               <th className="py-2 pr-4">Last checked</th>
               <th className="py-2">Latency</th>
             </tr>
@@ -28,7 +30,7 @@ async function StatusContent() {
           <tbody>
             {status.services.length === 0 && (
               <tr>
-                <td colSpan={4} className="py-3 text-muted">
+                <td colSpan={5} className="py-3 text-muted">
                   No services are being monitored yet.
                 </td>
               </tr>
@@ -44,6 +46,9 @@ async function StatusContent() {
                 <td className="py-2 pr-4">
                   <StateLabel state={service.state} color={service.color} />
                 </td>
+                <td className="py-2 pr-4 w-64">
+                  <HistoryBars buckets={service.history} granularity="hour" />
+                </td>
                 <td className="py-2 pr-4 font-mono text-xs">{formatWhen(service.last_check_at)}</td>
                 <td className="py-2 font-mono text-xs">
                   {service.last_latency_ms === null ? "—" : `${service.last_latency_ms} ms`}
@@ -52,6 +57,7 @@ async function StatusContent() {
             ))}
           </tbody>
         </table>
+        <HistoryLegend colors={status.colors} />
       </Panel>
 
       <Panel title="Active incidents">

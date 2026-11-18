@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { SiteHeader } from "@/components/site-header";
 import { AccessPanel } from "@/components/access-panel";
+import { NotificationSetup } from "@/components/notification-setup";
 import { Panel, StateLabel } from "@/components/ui";
 import { IncidentsPanel } from "@/components/incidents-panel";
 import { pageApi, PageApiError } from "@/lib/server-api";
@@ -57,6 +58,8 @@ export default async function OperatorDashboardPage() {
         </header>
 
         <IncidentsPanel role={session.role} />
+
+        <NotificationSetup required />
 
         <Panel title="Metrics — last 24 hours">
           <table className="w-full text-sm">

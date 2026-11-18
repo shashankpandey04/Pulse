@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, status
 
-from core import database
+from core import analytics, database
 from schemas.catalogue import COLLECTION_SERVICES
 from schemas.incidents import COLLECTION_INCIDENTS
 from schemas.public import (
@@ -74,6 +74,11 @@ def build_status_page() -> PublicStatusResponse:
         summary[state] = summary.get(state, 0) + 1
         views.append(_service_view(service))
 
+    # Hourly uptime bars (last 24 hours) for every listed service.
+    histories = analytics.status_page_histories([s["service_id"] for s in services])
+    for view in views:
+        view.history = histories.get(view.service_id, [])
+
     active = database.find_many(
         COLLECTION_INCIDENTS,
         {"status": {"$in": ["open", "acknowledged"]}},
@@ -106,4 +111,9 @@ def service_detail(slug: str) -> PublicServiceDetail:
         sort=[("opened_at", -1)],
         limit=20,
     )
-    return PublicServiceDetail(service=_service_view(service), incidents=[_public_incident(i) for i in history])
+    detail = PublicServiceDetail(
+        service=_service_view(service),
+        incidents=[_public_incident(i) for i in history],
+        daily_history=analytics.service_uptime_history(service["service_id"], days=30),
+    )
+    return detail
